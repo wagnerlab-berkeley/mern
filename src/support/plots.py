@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 from .add_edge import addEdge
-from .datasets import MetabolicDataset
+from .metabolic_datasets import MetabolicDataset
 
 
 def _graph_layout(graph: Union[nx.Graph, nx.DiGraph]) -> Mapping:

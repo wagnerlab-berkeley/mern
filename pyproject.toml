@@ -44,6 +44,7 @@ plot = [
     "matplotlib",
     "plotly",
     "scanpy>=1.10",
+    "scikit-misc",
     "seaborn",
 ]
 kegg = [
@@ -57,8 +58,13 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6.0",
 ]
+docs = [
+    "myst-nb",
+    "sphinx>=7.0",
+    "sphinx-book-theme",
+]
 all = [
-    "mern[plot,kegg,dev]",
+    "mern[plot,kegg,dev,docs]",
 ]
 
 [tool.hatch.build.targets.wheel]

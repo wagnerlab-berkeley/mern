@@ -18,6 +18,7 @@ tqdm
 matplotlib
 plotly
 scanpy>=1.10
+scikit-misc
 seaborn
 
 # KEGG / dataset utilities
@@ -30,3 +31,8 @@ build>=1.2.0
 pytest>=8.0
 pytest-cov>=5.0
 ruff>=0.6.0
+
+# Documentation
+myst-nb
+sphinx>=7.0
+sphinx-book-theme

@@ -24,7 +24,25 @@ This structure links latent dimensions to reaction activity and enzyme-coding ge
 
 ## Documentation
 
-Documentation is not published yet. For now, the main package code lives under `src/mern`, and the repository includes the core model, support utilities, and packaged KEGG resources.
+Documentation sources live under `docs/source`. The main Sphinx entry point is
+`docs/source/index.rst`, and the tutorial notebook currently lives in
+`docs/source/tutorials/MeRN_tutorial_final.ipynb`. Built documentation is
+written to `docs/build/html`.
+
+Install the docs dependencies with:
+
+```bash
+pip install -e ".[docs]"
+```
+
+Build the tutorial site from the `docs/` directory with:
+
+```bash
+cd docs
+make html
+```
+
+Then open `docs/build/html/index.html` in a browser.
 
 ## Installation
 
@@ -42,6 +60,12 @@ For development with plotting, KEGG utilities, and test dependencies:
 pip install -e ".[plot,kegg,dev]"
 ```
 
+To install everything, including docs dependencies:
+
+```bash
+pip install -e ".[plot,kegg,dev,docs]"
+```
+
 ## Key capabilities
 
 - Learn graph-guided latent representations of cell state from single-cell RNA-seq data.
@@ -54,12 +78,14 @@ pip install -e ".[plot,kegg,dev]"
 
 The current repository contains:
 
-- `src/mern/model.py`: main MERN model class
-- `src/mern/module.py`: core neural module
-- `src/mern/base_components.py`: graph and decoder components
-- `src/mern/datasets.py`: metabolic dataset and KEGG utilities
-- `src/mern/analysis.py`: downstream analysis helpers
-- `src/mern/plots.py`: plotting helpers
+- `src/model/`: model code, including the main MeRN model, neural modules,
+  base components, dataloaders, optimizer utilities, and configuration/constants
+- `src/support/`: analysis, plotting, dataset helpers, and other support code
+- `src/support/data/kegg/`: packaged KEGG-derived graph resources and related
+  data files
+- `docs/source/`: documentation sources for Sphinx
+- `docs/source/tutorials/`: tutorial notebooks included in the docs
+- `docs/build/html/`: generated HTML documentation after a docs build
 
 ## Contributing
 

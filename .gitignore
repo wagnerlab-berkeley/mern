@@ -9,6 +9,7 @@ dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+docs/build/
 
 # Virtual environments
 .venv/

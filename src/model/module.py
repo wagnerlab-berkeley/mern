@@ -190,7 +190,7 @@ class MERNModule(BaseModuleClass):
         fixed_graph_cell_kl: bool = False,
     ):
         from scvi.nn import Encoder
-        from mern.base_components import (
+        from .base_components import (
             DecoderMERN,
             GraphDecoder,
             GraphEncoder,

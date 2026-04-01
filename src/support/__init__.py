@@ -1,4 +1,4 @@
-"""Standalone MERN package."""
+"""Support utilities derived from the `mern-support` package."""
 
 from .analysis import (
     active_custom_pathways,
@@ -15,29 +15,14 @@ from .analysis import (
     wilcoxon_test,
 )
 from .config import ANNDATA_KEY, KEGG_DIR
-from .graph_dataloader import GraphDataLoader
-from .mern_dataloader import MERNDataLoader
-from .model import MERN
-from .module import MERNModule
-
-__version__ = "0.1.0"
-
-try:
-    from .datasets import KeggKGMLMetabolicDataset, MetabolicDataset
-except ImportError:  # Optional KEGG dependencies are installed via the `kegg` extra.
-    KeggKGMLMetabolicDataset = None
-    MetabolicDataset = None
+from .metabolic_datasets import KeggKGMLMetabolicDataset, MetabolicDataset, process_kegg_link
 
 __all__ = [
-    "__version__",
     "ANNDATA_KEY",
     "KEGG_DIR",
-    "MERN",
-    "MERNModule",
-    "MERNDataLoader",
-    "GraphDataLoader",
-    "MetabolicDataset",
     "KeggKGMLMetabolicDataset",
+    "MetabolicDataset",
+    "process_kegg_link",
     "latent_auc",
     "latent_regression",
     "get_gene_sets",

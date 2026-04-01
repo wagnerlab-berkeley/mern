@@ -48,7 +48,7 @@ class RxnsToGenesLayer(nn.Module):
         self.rxns = rxns
         self.rxns_to_genes = rxns_to_genes
         self.strict_met_back_separation = strict_met_back_separation
-        self.n_cov = sum(n_cat_list) if n_cat_list is not None else 0
+        self.n_cov = sum(n_cat_list)
 
         # create mask for weights layer that can't be used for loss
         loss_mask = torch.ones(len(self.genes), len(self.rxns))
