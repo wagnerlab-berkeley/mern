@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,12 @@ DEFAULT_BASELINE_DIR = ROOT / "tests" / "repro_outputs" / "baselines"
 def _run(cmd: list[str]) -> None:
     print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=ROOT, check=True)
+
+
+def _run_check(cmd: list[str]) -> bool:
+    print("+", " ".join(cmd), flush=True)
+    result = subprocess.run(cmd, cwd=ROOT, check=False)
+    return result.returncode == 0
 
 
 def _resolve_path(path: Path) -> Path:
@@ -125,23 +132,22 @@ def main() -> None:
             *common,
         ]
     )
-    _run(
-        [
-            "conda",
-            "run",
-            "-n",
-            args.new_env,
-            "python",
-            "scripts/compare_repro_parity.py",
-            str(old_output),
-            str(new_output),
-            "--label",
-            "old package vs merged package",
-            "--rtol",
-            str(args.rtol),
-            "--atol",
-            str(args.atol),
-        ]
+    checks_passed = []
+    checks_passed.append(
+        _run_check(
+            [
+                sys.executable,
+                "scripts/compare_repro_parity.py",
+                str(old_output),
+                str(new_output),
+                "--label",
+                "old package vs merged package",
+                "--rtol",
+                str(args.rtol),
+                "--atol",
+                str(args.atol),
+            ]
+        )
     )
 
     if not args.skip_baseline:
@@ -149,27 +155,29 @@ def main() -> None:
         if baseline is None:
             print(f"No saved baseline found in {baseline_dir}; skipped baseline comparison")
         else:
-            _run(
-                [
-                    "conda",
-                    "run",
-                    "-n",
-                    args.new_env,
-                    "python",
-                    "scripts/compare_repro_parity.py",
-                    str(baseline),
-                    str(new_output),
-                    "--label",
-                    f"latest saved baseline ({baseline.parent.name}) vs current merged package",
-                    "--rtol",
-                    str(args.rtol),
-                    "--atol",
-                    str(args.atol),
-                ]
+            checks_passed.append(
+                _run_check(
+                    [
+                        sys.executable,
+                        "scripts/compare_repro_parity.py",
+                        str(baseline),
+                        str(new_output),
+                        "--label",
+                        f"latest saved baseline ({baseline.parent.name}) vs current merged package",
+                        "--rtol",
+                        str(args.rtol),
+                        "--atol",
+                        str(args.atol),
+                    ]
+                )
             )
 
     if args.save_baseline:
         _save_baseline(baseline_dir, args.baseline_label, [old_output, new_output])
+
+    if not all(checks_passed):
+        failed_count = checks_passed.count(False)
+        raise SystemExit(f"{failed_count} repro comparison(s) failed")
 
 
 if __name__ == "__main__":
