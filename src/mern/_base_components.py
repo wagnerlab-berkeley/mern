@@ -48,6 +48,7 @@ class RxnsToGenesLayer(nn.Module):
         self.rxns = rxns
         self.rxns_to_genes = rxns_to_genes
         self.strict_met_back_separation = strict_met_back_separation
+        n_cat_list = [] if n_cat_list is None else n_cat_list
         self.n_cov = sum(n_cat_list)
 
         # create mask for weights layer that can't be used for loss
