@@ -21,6 +21,7 @@ env/
 .coverage
 .coverage.*
 htmlcov/
+tests/repro_outputs/
 
 # Type checking and linting
 .mypy_cache/
