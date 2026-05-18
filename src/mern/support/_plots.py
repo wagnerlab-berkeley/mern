@@ -3,7 +3,6 @@ import matplotlib.axes as ma
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import scanpy as sc
 from matplotlib import rcParams
 import matplotlib.pyplot as plt
 import networkx as nx

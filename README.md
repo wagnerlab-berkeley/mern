@@ -29,10 +29,10 @@ Documentation sources live under `docs/source`. The main Sphinx entry point is
 `docs/source/tutorials/MeRN_tutorial_final.ipynb`. Built documentation is
 written to `docs/build/html`.
 
-Install the docs dependencies with:
+Install the package in editable mode:
 
 ```bash
-pip install -e ".[docs]"
+pip install -e .
 ```
 
 Build the tutorial site from the `docs/` directory with:
@@ -54,17 +54,13 @@ Install the package in editable mode with:
 pip install -e .
 ```
 
-For development with plotting, KEGG utilities, and test dependencies:
+This installs the model, support utilities, plotting tools, KEGG helpers, test
+tools, and documentation build tools.
 
-```bash
-pip install -e ".[plot,kegg,dev]"
-```
+If installation fails while building `pygraphviz`, install Graphviz first
+(`brew install graphviz` on macOS, or `conda install -c conda-forge graphviz pygraphviz`
+inside a conda environment), then rerun the editable install.
 
-To install everything, including docs dependencies:
-
-```bash
-pip install -e ".[plot,kegg,dev,docs]"
-```
 
 ## Key capabilities
 

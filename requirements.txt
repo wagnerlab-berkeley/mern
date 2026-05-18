@@ -17,6 +17,7 @@ tqdm
 # Plotting utilities
 matplotlib
 plotly
+pygraphviz
 scanpy>=1.10
 scikit-misc
 seaborn
@@ -34,5 +35,6 @@ ruff>=0.6.0
 
 # Documentation
 myst-nb
+requests
 sphinx>=7.0
 sphinx-book-theme
