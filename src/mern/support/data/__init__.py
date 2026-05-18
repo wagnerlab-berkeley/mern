@@ -1,1 +1,1 @@
-# Data package for mern_support 
+# Data package for mern.support

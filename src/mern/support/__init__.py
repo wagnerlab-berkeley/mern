@@ -4,7 +4,9 @@ MeRN Support Tools
 A collection of supporting tools for MeRN development and operations.
 """
 
-__version__ = "0.1.0"
+from importlib import import_module
+
+__version__ = "1.0.0"
 __author__ = "Daniel Lewinsohn"
 __email__ = "daniel_lewinsohn@berkeley.edu"
 
@@ -47,13 +49,34 @@ from ._ddp_llm_context import (
     write_ddp_llm_bundle_jsonl,
 )
 
-# Import from other modules (uncomment as needed)
-from ._plots import *
 from ._metabolic_datasets import *
 # from ._addEdge import *
 
 # Import configuration
 from .config import KEGG_DIR
+
+_PLOT_EXPORTS = {
+    "training_plot",
+    "metabolic_topology_plot",
+    "metabolic_topology_plot_go",
+    "kegg_pathway_plot",
+    "custom_pathway_plot",
+    "rxn_volcano_plot",
+    "reaction_scatter_plot",
+}
+
+
+def __getattr__(name):
+    if name in _PLOT_EXPORTS:
+        _plots = import_module("._plots", __name__)
+        value = getattr(_plots, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | _PLOT_EXPORTS)
 
 __all__ = [
     "__version__",

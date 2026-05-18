@@ -3,7 +3,7 @@
 project = "MeRN"
 copyright = "2026, Adelina Chau"
 author = "Adelina Chau"
-release = "0.1"
+release = "1.0.0"
 
 extensions = [
     "myst_nb",

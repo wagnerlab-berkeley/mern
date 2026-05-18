@@ -835,7 +835,7 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
     ):
         """Return the weights of the reaction-to-genes mapping layer.
 
-        For :class:`~scvi.external.mern._base_components.RxnsToGenesLayer`, inputs are
+        For :class:`~mern._base_components.RxnsToGenesLayer`, inputs are
         ``[reaction activations | batch / categorical covariate one-hots]`` (see decoder
         ``forward``), so :attr:`torch.nn.Linear.weight` has ``in_features = n_rxns + n_cov``.
         Columns are reaction names followed by one placeholder name per covariate dimension.

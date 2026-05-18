@@ -190,7 +190,7 @@ class MERNModule(BaseModuleClass):
         fixed_graph_cell_kl: bool = False,
     ):
         from scvi.nn import Encoder
-        from scvi.external.mern._base_components import DecoderMERN, GraphEncoder, GraphDecoder, MetabolicEncoder
+        from ._base_components import DecoderMERN, GraphEncoder, GraphDecoder, MetabolicEncoder
 
         super().__init__()
         self.genes = genes

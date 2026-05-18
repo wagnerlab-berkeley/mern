@@ -1,6 +1,6 @@
 import torch
 
-from mern.base_components import (
+from mern._base_components import (
     RxnsToGenesLayer
 )
 
