@@ -4,36 +4,13 @@ import torch
 from mern import MERN
 
 
-def _small_model_inputs(mouse_intestine_100, mouse_intestine_100_mern_inputs):
-    adata = mouse_intestine_100.copy()
-    features = list(
-        adata.var_names[
-            adata.var["highly_variable_metabolic"] | adata.var["highly_variable_background"]
-        ]
-    )
-    features.sort()
-    adata = adata[:, features].copy()
-
-    graph = mouse_intestine_100_mern_inputs["graph"]
-    rxn_to_genes = mouse_intestine_100_mern_inputs["rxn_to_genes"]
-    graph = graph.subgraph(
-        [
-            node
-            for node in graph.nodes
-            if any(gene in adata.var_names for gene in rxn_to_genes.get(node, []))
-        ]
-    ).copy()
-
-    return adata, graph, rxn_to_genes
-
-
-def test_mern_setup_init_and_forward_smoke(mouse_intestine_100, mouse_intestine_100_mern_inputs):
+def test_mern_setup_init_and_forward_smoke(general_package_adata_graph_rxn_genes):
     torch.manual_seed(0)
     np.random.seed(0)
 
-    adata, graph, rxn_to_genes = _small_model_inputs(
-        mouse_intestine_100, mouse_intestine_100_mern_inputs
-    )
+    adata, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
+    adata = adata.copy()
+    graph = graph.copy()
 
     MERN.setup_anndata(adata, layer="counts", batch_key=None)
     model = MERN(

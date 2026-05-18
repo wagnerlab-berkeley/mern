@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import pickle
 import random
 from pathlib import Path
 from typing import Any
@@ -17,10 +16,8 @@ import anndata as ad
 import numpy as np
 import torch
 
-
 ROOT = Path(__file__).resolve().parents[1]
 ADATA_PATH = ROOT / "tests" / "data" / "mouse_intestine_100.h5ad"
-INPUTS_PATH = ROOT / "tests" / "data" / "mouse_intestine_100_mern_inputs.pkl"
 
 
 def _as_float(value: Any) -> float:
@@ -103,6 +100,38 @@ def _first_batch_loss(model) -> dict[str, float]:
     return out
 
 
+def _load_support(impl: str):
+    if impl == "old":
+        import importlib.util
+        import sys
+        import types
+
+        old_support = ROOT.parent / "mern-support" / "mern_support"
+        package_name = "legacy_repro_msupport"
+        package = types.ModuleType(package_name)
+        package.__path__ = [str(old_support)]
+        sys.modules[package_name] = package
+
+        for name in ("config", "_addEdge"):
+            path = old_support / f"{name}.py"
+            spec = importlib.util.spec_from_file_location(f"{package_name}.{name}", path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[f"{package_name}.{name}"] = module
+            spec.loader.exec_module(module)
+            setattr(package, name, module)
+
+        path = old_support / "_metabolic_datasets.py"
+        spec = importlib.util.spec_from_file_location(f"{package_name}._metabolic_datasets", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[f"{package_name}._metabolic_datasets"] = module
+        spec.loader.exec_module(module)
+        return module
+
+    from mern.support import _metabolic_datasets
+
+    return _metabolic_datasets
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--impl", choices=["old", "new"], required=True)
@@ -126,14 +155,21 @@ def main() -> None:
     scvi.settings.seed = 0
 
     adata = ad.read_h5ad(ADATA_PATH)
-    with INPUTS_PATH.open("rb") as handle:
-        inputs = pickle.load(handle)
+    support_datasets = _load_support(args.impl)
+    dataset = support_datasets.KeggKGMLMetabolicDataset(
+        species="mouse",
+        capitalize=False,
+        add_oxphos=True,
+    )
+    dataset.add_module_info(adata)
+    graph = dataset.metabolic_topology(adata, self_loops=False)
+    rxn_to_genes = dataset.get_rxn_genes_all()
 
     MERN.setup_anndata(adata, layer="counts", batch_key=None)
     model = MERN(
         adata,
-        inputs["graph"],
-        inputs["rxn_to_genes"],
+        graph,
+        rxn_to_genes,
         n_hidden=32,
         n_layers=1,
         n_metabolic_dim=5,
@@ -148,8 +184,8 @@ def main() -> None:
         "impl": args.impl,
         "scvi_version": scvi.__version__,
         "adata_shape": list(adata.shape),
-        "graph_nodes": inputs["graph"].number_of_nodes(),
-        "graph_edges": inputs["graph"].number_of_edges(),
+        "graph_nodes": graph.number_of_nodes(),
+        "graph_edges": graph.number_of_edges(),
         "initial_state": _state_summary(model),
         "initial_first_batch": _first_batch_loss(model),
     }

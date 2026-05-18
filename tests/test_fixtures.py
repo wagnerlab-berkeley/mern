@@ -12,9 +12,8 @@ def test_mouse_intestine_fixture_shape_and_annotations(mouse_intestine_100):
     assert (mouse_intestine_100.var["Metabolic Gene"] == "Metabolic").sum() > 0
 
 
-def test_mouse_intestine_mern_inputs(mouse_intestine_100_mern_inputs):
-    graph = mouse_intestine_100_mern_inputs["graph"]
-    rxn_to_genes = mouse_intestine_100_mern_inputs["rxn_to_genes"]
+def test_mouse_intestine_support_inputs(general_package_adata_graph_rxn_genes):
+    _, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
 
     assert isinstance(graph, nx.DiGraph)
     assert graph.number_of_nodes() > 0
