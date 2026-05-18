@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 
 from scvi.data import AnnDataManager
 from scvi.dataloaders import AnnDataLoader
-from .graph_dataloader import GraphDataLoader
+from ._graph_dataloader import GraphDataLoader
 
 class MERNDataLoader(DataLoader):
     """DataLoader that supports loading both cell data and graph data.
@@ -93,3 +93,4 @@ class MERNDataLoader(DataLoader):
         
         
         
+

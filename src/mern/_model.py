@@ -32,10 +32,10 @@ from scvi.utils._docstrings import devices_dsp
 from scvi.data._utils import _validate_adata_dataloader_input
 from scvi.distributions._utils import DistributionConcatenator, subset_distribution
 
-from .module import MERNModule
-from .mern_data_splitting import MERNDataSplitter
-from .mern_dataloader import MERNDataLoader
-from .custom_optimizer import create_rmsprop_optimizer
+from ._module import MERNModule
+from ._mern_data_splitting import MERNDataSplitter
+from ._mern_dataloader import MERNDataLoader
+from ._custom_optimizer import create_rmsprop_optimizer
 
 from collections.abc import Iterator, Sequence
 
@@ -110,8 +110,8 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
         vertex_mapping: dict[int, str] | None = None,
         positive_met_dims: bool = False,
         fixed_rxn_genes: bool = False,
-        strict_met_back_separation: bool = False,
-        rxn_genes_bias: bool = False,
+        strict_met_back_separation: bool = True,
+        rxn_genes_bias: bool = True,
         **kwargs,
     ):
         """Initialize MERN model.
@@ -125,20 +125,11 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
         """
         super().__init__(adata, registry)
 
-        met_genes = []
-        for rxn in rxn_to_genes:
-            temp_genes = set(rxn_to_genes[rxn])
-            met_genes+=list(temp_genes)
-        met_genes = list(set(met_genes))
-
-        met_label = []
-        for gene in adata.var_names:
-            if gene in met_genes:
-                met_label.append('Metabolic')
-            else:
-                met_label.append('Non-metabolic')
-        
-        self.metabolic_genes = pd.Series(met_label, index=adata.var_names)
+        """I think just self.metabolic_genes = adata.var['Metabolic Gene'] is enough, right now some isolate are included"""
+        try:
+            self.metabolic_genes = adata.var['Metabolic Gene']
+        except KeyError:
+            raise ValueError("Metabolic Gene column not found in adata.var, please run add_module_info().")
 
         if (self.metabolic_genes=='Metabolic').sum() < 200:
             warnings.warn("Less than 200 metabolic genes found. You may not be including relevant genes.")
@@ -151,6 +142,13 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
             # this is the same logic as from_networkx so should work as long as graph doesn't change between calls
             self.vertex_mapping = dict(zip(range(graph.number_of_nodes()), graph.nodes()))
             nx_graph = from_networkx(graph, group_edge_attrs=["weight", "sign"])
+            """Add assert statement here checking vertex mapping was done correctly"""
+            reverse_mapping = dict(zip(self.vertex_mapping.values(), self.vertex_mapping.keys()))
+            for node in graph.nodes():
+                neighbors = graph.neighbors(node)
+                for neighbor in neighbors:
+                    assert ((nx_graph.edge_index[0] == reverse_mapping[node]) & (nx_graph.edge_index[1] == reverse_mapping[neighbor])).any(), "Missing Edge"
+                    assert ((nx_graph.edge_index[0] == reverse_mapping[neighbor]) & (nx_graph.edge_index[1] == reverse_mapping[node])).any(), "Reverse Missing Edge"
             self.graph = nx_graph
         else:
             self.vertex_mapping = vertex_mapping
@@ -410,7 +408,7 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
         from torch.distributions import Normal
         from torch.nn.functional import softmax
 
-        from .constants import MODULE_KEYS
+        from ._constants import MODULE_KEYS
 
         self._check_if_trained(warn=False)
         _validate_adata_dataloader_input(self, adata, dataloader)
@@ -835,12 +833,32 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
         self, 
         return_numpy: bool = False,
     ):
-        """Returns the weights of the rxn to genes layer"""
-        weights = self.module.decoder.rxn_gene_layer.linear.weight.detach().clone().cpu().numpy()
-        if not return_numpy:
-            return pd.DataFrame(weights, columns=self.vertex_names_ordered, index=self.gene_names_ordered)
+        """Return the weights of the reaction-to-genes mapping layer.
+
+        For :class:`~scvi.external.mern._base_components.RxnsToGenesLayer`, inputs are
+        ``[reaction activations | batch / categorical covariate one-hots]`` (see decoder
+        ``forward``), so :attr:`torch.nn.Linear.weight` has ``in_features = n_rxns + n_cov``.
+        Columns are reaction names followed by one placeholder name per covariate dimension.
+        """
+        layer = self.module.decoder.rxn_gene_layer
+        if hasattr(layer, "linear"):
+            weights = layer.linear.weight.detach().clone().cpu().numpy()
+            n_cov = int(getattr(layer, "n_cov", 0) or 0)
+            columns = list(self.vertex_names_ordered) + [
+                f"decoder_covariate_one_hot_{i}" for i in range(n_cov)
+            ]
         else:
-            return weights
+            # RxnsToGenesFixed: no extra covariates, weights stored on fixed_weights (out, in)
+            weights = layer.fixed_weights.detach().clone().cpu().numpy()
+            columns = list(self.vertex_names_ordered)
+        if weights.shape[1] != len(columns):
+            raise ValueError(
+                f"Weight matrix has {weights.shape[1]} input columns but {len(columns)} column "
+                "labels; vertex_mapping / graph and decoder covariate layout may be out of sync."
+            )
+        if not return_numpy:
+            return pd.DataFrame(weights, columns=columns, index=self.gene_names_ordered)
+        return weights
 
     def _make_data_loader(
         self,

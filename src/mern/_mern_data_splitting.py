@@ -19,7 +19,7 @@ from scvi.data import AnnDataManager
 from scvi.data._utils import get_anndata_attribute
 from scvi.model._utils import parse_device_args
 from scvi.utils._docstrings import devices_dsp
-from .mern_dataloader import MERNDataLoader
+from ._mern_dataloader import MERNDataLoader
 
 
 def validate_data_split(
@@ -344,4 +344,5 @@ class MERNDataSplitter(pl.LightningDataModule):
                     batch[key] = val.to_dense()
 
         return batch
+
 

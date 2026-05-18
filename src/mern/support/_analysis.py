@@ -345,7 +345,7 @@ def calculate_pathway_scores(enzyme_acts, reaction_info, pathways=None, min_rxns
     Returns
     --------
     pathway_acts_df
-        pathway activity dataframe for each cell
+        pathway activity dataframe (cells by pathways)
     pathway_rxns
         pathway to rxns dictionary
 
@@ -384,6 +384,178 @@ def calculate_pathway_scores(enzyme_acts, reaction_info, pathways=None, min_rxns
         rxn_acts = enzyme_acts.loc[:,rxns]
         rxn_acts_mean = rxn_acts.mean(axis=1)
         pathway_acts.append(rxn_acts_mean)
-    pathway_acts_df = pd.DataFrame(pathway_acts, index=pathways).dropna()
+    # build (pathways x cells) then transpose to (cells x pathways)
+    pathway_acts_df = pd.DataFrame(pathway_acts, index=pathways).dropna().T
 
     return pathway_acts_df, pathway_rxns, id_to_name
+
+
+def calculate_ddp_scores(
+    enzyme_acts: pd.DataFrame,
+    rxn_to_ddp: pd.Series,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Calculate average reaction score in each cell for each DDP.
+
+    Parameters
+    ----------
+    enzyme_acts
+        Enzyme activity matrix, typically shaped (cells x reactions).
+    rxn_to_ddp
+        Pandas Series mapping reactions -> DDP. The Series index must be reactions.
+
+    Returns
+    -------
+    ddp_scores
+        DataFrame of DDP scores with shape (cells x ddp), where each entry is the
+        mean activity across reactions assigned to that DDP for that cell.
+    ddp_rxns
+        Dictionary mapping ddp -> list of reactions included.
+    """
+    if not isinstance(enzyme_acts, pd.DataFrame):
+        raise TypeError("enzyme_acts must be a pandas DataFrame")
+    if not isinstance(rxn_to_ddp, pd.Series):
+        raise TypeError("rxn_to_ddp must be a pandas Series")
+
+    rxn_to_ddp = rxn_to_ddp.dropna()
+
+    overlap_cols = enzyme_acts.columns.intersection(rxn_to_ddp.index)
+    overlap_idx = enzyme_acts.index.intersection(rxn_to_ddp.index)
+
+    # If no overlap on columns but overlap on index, assume matrix is (reactions x cells).
+    if len(overlap_cols) == 0 and len(overlap_idx) > 0:
+        enzyme_acts = enzyme_acts.T
+        overlap_cols = enzyme_acts.columns.intersection(rxn_to_ddp.index)
+
+    if len(overlap_cols) == 0:
+        raise ValueError(
+            "No overlapping reactions found between enzyme_acts and rxn_to_ddp. "
+            "Expected rxn_to_ddp.index to match enzyme_acts columns (reactions)."
+        )
+
+    rxn_to_ddp = rxn_to_ddp.loc[overlap_cols]
+
+    ddp_rxns: dict = {
+        ddp: list(rxn_to_ddp.index[rxn_to_ddp == ddp])
+        for ddp in pd.unique(rxn_to_ddp)
+    }
+
+    ddps = []
+    ddp_scores = []
+    for ddp, rxns in ddp_rxns.items():
+        if len(rxns) == 0:
+            continue
+        ddps.append(ddp)
+        ddp_scores.append(enzyme_acts.loc[:, rxns].mean(axis=1))
+
+    # build (ddp x cells) then transpose to (cells x ddp)
+    ddp_scores_df = pd.DataFrame(ddp_scores, index=ddps).dropna().T
+    return ddp_scores_df, ddp_rxns
+
+
+def calculate_ddps(
+    G: nx.Graph,
+    corr_df: pd.DataFrame,
+    min_corr: float = 0.6,
+    min_size: int = 3,
+) -> tuple[pd.Series, dict, list[list]]:
+    """
+    Calculate DDPs by clustering reactions on a graph with a correlation threshold.
+
+    This mirrors the notebook's `get_strict_pathways` + `rxn_clusters` construction:
+    - Start with each node in its own cluster.
+    - Iteratively merge clusters connected by an edge if the *minimum* correlation
+      between any node-pair across the two clusters is >= `min_corr`
+      (i.e., complete-linkage on correlation, restricted to graph edges).
+    - Keep clusters with size >= `min_size`.
+
+    Parameters
+    ----------
+    G
+        Graph whose nodes are reactions (or meta-reactions). May be a superset of the
+        reactions in ``corr_df``; only reactions present in ``corr_df`` are clustered
+        and listed in ``rxn_to_ddp``, and only edges between those reactions are used.
+    corr_df
+        Correlation DataFrame; reactions are ``index`` ∩ ``columns`` (in index order).
+        This set may be a subset of ``G.nodes()`` or otherwise differ from ``G``.
+    min_corr
+        Minimum complete-linkage correlation required to merge two clusters.
+    min_size
+        Minimum cluster size to keep as a DDP.
+
+    Returns
+    -------
+    rxn_to_ddp
+        Series with one row per reaction in ``corr_df.index`` ∩ ``corr_df.columns``:
+        ddp_id (e.g. ``"ddp_0"``) if in a kept DDP, else ``None``. Suitable for
+        ``calculate_ddp_scores`` (which ignores unassigned entries via ``dropna``).
+    ddp_rxns
+        Dict mapping ddp_id (string) -> list of reactions in that DDP.
+    clusters
+        List of clusters, each a list of reactions.
+    """
+    in_both = corr_df.index.intersection(corr_df.columns)
+    nodes = []
+    seen = set()
+    for r in corr_df.index:
+        if r in in_both and r not in seen:
+            seen.add(r)
+            nodes.append(r)
+
+    if len(nodes) == 0:
+        return pd.Series(dtype=object), {}, []
+
+    # Pre-filter correlation matrix to reactions in corr_df only.
+    corr_matrix = corr_df.loc[nodes, nodes].values
+    node_idx = {node: i for i, node in enumerate(nodes)}
+
+    # Initialization: each node is its own cluster.
+    node_to_cluster = {node: i for i, node in enumerate(nodes)}
+    clusters = {i: {node} for i, node in enumerate(nodes)}
+
+    def get_min_corr(c1: set, c2: set) -> float:
+        indices1 = [node_idx[n] for n in c1]
+        indices2 = [node_idx[n] for n in c2]
+        sub_matrix = corr_matrix[np.ix_(indices1, indices2)]
+        return float(np.min(sub_matrix))
+
+    # Iterative merging (restricted to physical graph edges).
+    while True:
+        best_merge = None
+        max_min_corr = -1.0
+
+        for u, v in G.edges():
+            if u not in node_to_cluster or v not in node_to_cluster:
+                continue
+            c1_id = node_to_cluster[u]
+            c2_id = node_to_cluster[v]
+            if c1_id == c2_id:
+                continue
+
+            current_min = get_min_corr(clusters[c1_id], clusters[c2_id])
+            if current_min >= min_corr and current_min > max_min_corr:
+                max_min_corr = current_min
+                best_merge = (c1_id, c2_id)
+
+        if best_merge is None:
+            break
+
+        id1, id2 = best_merge
+        clusters[id1] = clusters[id1].union(clusters[id2])
+        for node in clusters[id2]:
+            node_to_cluster[node] = id1
+        del clusters[id2]
+
+    # Post-process: keep only clusters meeting min_size, then re-index ddp ids.
+    kept = [sorted(list(c)) for c in clusters.values() if len(c) >= min_size]
+    kept = sorted(kept, key=lambda c: (len(c), c[0] if len(c) else ""), reverse=False)
+
+    ddp_rxns: dict[str, list] = {
+        f"ddp_{i}": cluster for i, cluster in enumerate(kept)
+    }
+    rxn_to_ddp: dict = {n: None for n in nodes}
+    for ddp_id, rxns in ddp_rxns.items():
+        for rxn in rxns:
+            rxn_to_ddp[rxn] = ddp_id
+
+    return pd.Series(rxn_to_ddp, dtype=object), ddp_rxns, kept

@@ -20,7 +20,7 @@ from scvi.module.base import (
 )
 
 from torch.distributions import Distribution
-from .constants import MODULE_KEYS, GRAPH_REGISTRY_KEYS, METABOLIC_REGISTRY_KEYS
+from ._constants import MODULE_KEYS, GRAPH_REGISTRY_KEYS, METABOLIC_REGISTRY_KEYS
 
 class MERNModule(BaseModuleClass):
     """MERN module for inferring metabolic state from single-cell transcriptomic data.
@@ -190,12 +190,7 @@ class MERNModule(BaseModuleClass):
         fixed_graph_cell_kl: bool = False,
     ):
         from scvi.nn import Encoder
-        from .base_components import (
-            DecoderMERN,
-            GraphDecoder,
-            GraphEncoder,
-            MetabolicEncoder,
-        )
+        from scvi.external.mern._base_components import DecoderMERN, GraphEncoder, GraphDecoder, MetabolicEncoder
 
         super().__init__()
         self.genes = genes
@@ -431,7 +426,7 @@ class MERNModule(BaseModuleClass):
         )
 
         local_library_log_vars_met = linear(
-            one_hot(batch_index.squeeze(-1), n_batch).float(), self.library_log_vars
+            one_hot(batch_index.squeeze(-1), n_batch).float(), self.library_log_vars_met
         )
 
         local_library_log_means_back = linear(
@@ -687,6 +682,34 @@ class MERNModule(BaseModuleClass):
         
         from torch.distributions import kl_divergence
 
+        def scvi_loss(
+            self,
+            tensors,
+            inference_outputs,
+            generative_outputs,
+        ):
+            x = tensors['cells'][REGISTRY_KEYS.X_KEY]
+            kl_divergence_m = kl_divergence(
+                inference_outputs[MODULE_KEYS.QM_KEY], generative_outputs[MODULE_KEYS.PM_KEY]
+            ).sum(dim=-1)
+            kl_divergence_b = kl_divergence(
+                inference_outputs[MODULE_KEYS.QB_KEY], generative_outputs[MODULE_KEYS.PB_KEY]
+            ).sum(dim=-1)
+            x_nll_all = -generative_outputs[MODULE_KEYS.PX_KEY].log_prob(x)
+            reconst_loss = x_nll_all.sum(-1)
+            metabolic_reconst_loss = x_nll_all[:, self.gene_is_metabolic].sum(-1)
+            background_reconst_loss = x_nll_all[:, ~self.gene_is_metabolic].sum(-1)
+            
+            losses = {
+                "scvi_reconst_loss": reconst_loss,
+                "scvi_metabolic_reconst_loss": metabolic_reconst_loss,
+                "scvi_background_reconst_loss": background_reconst_loss,
+                "scvi_kl_m": kl_divergence_m,
+                "scvi_kl_b": kl_divergence_b,
+            }
+
+            return losses
+
         def old_loss(
             self,
             tensors,
@@ -781,6 +804,7 @@ class MERNModule(BaseModuleClass):
             return losses
         
         old_losses = old_loss(self, tensors, inference_outputs, generative_outputs, kl_weight, graph_kl_weight, data_elbo_weight, graph_elbo_weight, rxn_genes_weight, background_to_metabolic_weight)
+        scvi_losses = scvi_loss(self, tensors, inference_outputs, generative_outputs)
 
         x = tensors['cells'][REGISTRY_KEYS.X_KEY]
         v_shape = inference_outputs[MODULE_KEYS.V_KEY].shape
@@ -856,6 +880,7 @@ class MERNModule(BaseModuleClass):
         }
 
         extra_metrics.update(old_losses)
+        extra_metrics.update(scvi_losses)
 
         return LossOutput(
             loss=loss,

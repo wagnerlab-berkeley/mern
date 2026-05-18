@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 from torch_geometric.utils import negative_sampling
 
-from .constants import GRAPH_REGISTRY_KEYS
+from ._constants import GRAPH_REGISTRY_KEYS
 
 class GraphDataLoader(DataLoader):
     """DataLoader for graph data. Returns entire graph + new negative samples at each iteration.
