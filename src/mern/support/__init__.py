@@ -6,7 +6,8 @@ A collection of supporting tools for MeRN development and operations.
 
 from importlib import import_module
 
-__version__ = "1.0.0"
+from .._version import __version__
+
 __author__ = "Daniel Lewinsohn"
 __email__ = "daniel_lewinsohn@berkeley.edu"
 

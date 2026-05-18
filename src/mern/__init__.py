@@ -1,7 +1,6 @@
 """MERN model for single-cell data analysis."""
 
-__version__ = "1.0.0"
-
+from ._version import __version__
 from ._model import MERN
 from ._module import MERNModule
 from ._mern_dataloader import MERNDataLoader
