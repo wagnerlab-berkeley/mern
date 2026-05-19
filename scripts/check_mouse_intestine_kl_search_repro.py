@@ -70,6 +70,7 @@ def main() -> None:
     parser.add_argument("--n-background-dim", type=int, default=15)
     parser.add_argument("--max-epochs", type=int, default=1)
     parser.add_argument("--skip-train", action="store_true")
+    parser.add_argument("--batch-key", default=None)
     parser.add_argument("--rtol", type=float, default=1e-6)
     parser.add_argument("--atol", type=float, default=1e-6)
     args = parser.parse_args()
@@ -77,11 +78,15 @@ def main() -> None:
     output_dir = _resolve_path(args.output_dir)
     baseline_dir = _resolve_path(args.baseline_dir)
 
-    suffix = (
-        f"rep{args.rep}_maxkl{args.max_kl_weight}_graphkl{args.graph_kl_weight}_"
-        f"met{args.n_metabolic_dim}_"
-        f"back{args.n_background_dim}_{'init' if args.skip_train else f'{args.max_epochs}epoch'}"
-    )
+    suffix_parts = [
+        f"rep{args.rep}_maxkl{args.max_kl_weight}_graphkl{args.graph_kl_weight}",
+        f"met{args.n_metabolic_dim}",
+        f"back{args.n_background_dim}",
+    ]
+    if args.batch_key is not None:
+        suffix_parts.append(f"batch{args.batch_key}")
+    suffix_parts.append("init" if args.skip_train else f"{args.max_epochs}epoch")
+    suffix = "_".join(suffix_parts)
     old_output = output_dir / f"old_mouse_intestine_kl_search_{suffix}.json"
     new_output = output_dir / f"new_mouse_intestine_kl_search_{suffix}.json"
 
@@ -101,6 +106,8 @@ def main() -> None:
     ]
     if args.skip_train:
         common.append("--skip-train")
+    if args.batch_key is not None:
+        common.extend(["--batch-key", args.batch_key])
 
     _run(
         [

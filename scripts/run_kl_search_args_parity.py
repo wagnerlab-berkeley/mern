@@ -92,6 +92,83 @@ def _first_batch_loss(model) -> dict[str, Any]:
     return out
 
 
+def _as_abs_delta_summary(left: Any, right: Any) -> dict[str, float]:
+    left_arr = np.asarray(left, dtype=float)
+    right_arr = np.asarray(right, dtype=float)
+    delta = np.abs(left_arr - right_arr)
+    return {
+        "sum": float(delta.sum()),
+        "mean": float(delta.mean()),
+        "max": float(delta.max()) if delta.size else 0.0,
+    }
+
+
+def _summarize_decoding(decoding: dict[str, Any]) -> dict[str, Any]:
+    out = {
+        key: _as_array_summary(value)
+        for key, value in decoding.items()
+        if key
+        in {
+            "enzyme_activity",
+            "met_mu",
+            "met_scale",
+            "bg_mu",
+            "bg_scale",
+            "full_mu",
+        }
+    }
+    out["full_mu_minus_components_abs_delta"] = _as_abs_delta_summary(
+        np.asarray(decoding["full_mu"], dtype=float),
+        np.asarray(decoding["met_mu"], dtype=float) + np.asarray(decoding["bg_mu"], dtype=float),
+    )
+    return out
+
+
+def _decoding_summary(model, batch_key: str | None = None) -> dict[str, Any]:
+    indices = np.arange(min(8, model.adata.n_obs))
+    batch_size = len(indices)
+    random_state = random.getstate()
+    numpy_state = np.random.get_state()
+    torch_state = torch.random.get_rng_state()
+
+    def decode(transform_batch: list[str] | None = None) -> dict[str, Any]:
+        random.seed(1234)
+        np.random.seed(1234)
+        torch.manual_seed(1234)
+        return model.get_decoding(
+            indices=indices,
+            transform_batch=transform_batch,
+            batch_size=batch_size,
+            return_numpy=True,
+        )
+
+    try:
+        observed = decode()
+        out = {"observed": _summarize_decoding(observed)}
+
+        if batch_key is not None:
+            categories = list(model.adata.obs[batch_key].cat.categories)
+            out["transform_categories"] = categories[:2]
+            if len(categories) >= 2:
+                first = decode([categories[0]])
+                second = decode([categories[1]])
+                out["transform_first"] = _summarize_decoding(first)
+                out["transform_second"] = _summarize_decoding(second)
+                out["transform_deltas"] = {
+                    "enzyme_activity": _as_abs_delta_summary(
+                        first["enzyme_activity"], second["enzyme_activity"]
+                    ),
+                    "full_mu": _as_abs_delta_summary(first["full_mu"], second["full_mu"]),
+                    "met_mu": _as_abs_delta_summary(first["met_mu"], second["met_mu"]),
+                    "bg_mu": _as_abs_delta_summary(first["bg_mu"], second["bg_mu"]),
+                }
+        return out
+    finally:
+        random.setstate(random_state)
+        np.random.set_state(numpy_state)
+        torch.random.set_rng_state(torch_state)
+
+
 def _kl_search_values(array_task_id: int) -> tuple[int, float, float]:
     max_kl_weights = [0.0001, 0.001, 0.005, 0.01]
     graph_kl_weights = [0.01, 0.1]
@@ -323,6 +400,7 @@ def main() -> None:
         "graph_edges": graph.number_of_edges(),
         "initial_state": _state_summary(model),
         "initial_first_batch": _first_batch_loss(model),
+        "initial_decoding": _decoding_summary(model, args.batch_key),
     }
 
     if not args.skip_train:
@@ -344,6 +422,7 @@ def main() -> None:
         result["history_last"] = _history_last(model.history)
         result["trained_state"] = _state_summary(model)
         result["trained_first_batch"] = _first_batch_loss(model)
+        result["trained_decoding"] = _decoding_summary(model, args.batch_key)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(_json_safe(result), indent=2, sort_keys=True))

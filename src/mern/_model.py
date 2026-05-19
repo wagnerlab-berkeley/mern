@@ -761,30 +761,51 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
         px_m_store = DistributionConcatenator()
         px_b_store = DistributionConcatenator()
         px_store = DistributionConcatenator()
+        if return_dists and len(transform_batch) > 1:
+            raise NotImplementedError(
+                "Distribution returns are not supported when decoding is averaged across "
+                "batches."
+            )
         for tensors in scdl:
             inference_kwargs = {"n_samples": n_samples}
-            inference_outputs, generative_outputs = self.module.forward(
-                tensors=tensors,
-                inference_kwargs=inference_kwargs,
-                compute_loss=False,
-            )
-           
-            px_generative = generative_outputs["px"]
-            px_m_generative = generative_outputs["px_met"]
-            px_b_generative = generative_outputs["px_back"]
-            enzyme_activity_generative = generative_outputs["enzyme_activity"]
+            per_batch_met_mu = []
+            per_batch_met_scale = []
+            per_batch_bg_mu = []
+            per_batch_bg_scale = []
+            per_batch_full_mu = []
+            per_batch_enzyme_activity = []
+            for target_batch in transform_batch:
+                generative_kwargs = self._get_transform_batch_gen_kwargs(target_batch)
+                inference_outputs, generative_outputs = self.module.forward(
+                    tensors=tensors,
+                    inference_kwargs=inference_kwargs,
+                    generative_kwargs=generative_kwargs,
+                    compute_loss=False,
+                )
 
-            met_mu.append(px_m_generative.get_normalized("mu").cpu())
-            met_scale.append(px_m_generative.get_normalized("scale").cpu())
-            bg_mu.append(px_b_generative.get_normalized("mu").cpu())
-            bg_scale.append(px_b_generative.get_normalized("scale").cpu())
-            full_mu.append(px_generative.get_normalized("mu").cpu())
-            enzyme_activity.append(enzyme_activity_generative.cpu())
+                px_generative = generative_outputs["px"]
+                px_m_generative = generative_outputs["px_met"]
+                px_b_generative = generative_outputs["px_back"]
+                enzyme_activity_generative = generative_outputs["enzyme_activity"]
 
-            if return_dists:
-                px_m_store.store_distribution(px_m_generative)
-                px_b_store.store_distribution(px_b_generative)
-                px_store.store_distribution(px_generative)
+                per_batch_met_mu.append(px_m_generative.get_normalized("mu").cpu())
+                per_batch_met_scale.append(px_m_generative.get_normalized("scale").cpu())
+                per_batch_bg_mu.append(px_b_generative.get_normalized("mu").cpu())
+                per_batch_bg_scale.append(px_b_generative.get_normalized("scale").cpu())
+                per_batch_full_mu.append(px_generative.get_normalized("mu").cpu())
+                per_batch_enzyme_activity.append(enzyme_activity_generative.cpu())
+
+                if return_dists:
+                    px_m_store.store_distribution(px_m_generative)
+                    px_b_store.store_distribution(px_b_generative)
+                    px_store.store_distribution(px_generative)
+
+            met_mu.append(torch.stack(per_batch_met_mu).mean(0))
+            met_scale.append(torch.stack(per_batch_met_scale).mean(0))
+            bg_mu.append(torch.stack(per_batch_bg_mu).mean(0))
+            bg_scale.append(torch.stack(per_batch_bg_scale).mean(0))
+            full_mu.append(torch.stack(per_batch_full_mu).mean(0))
+            enzyme_activity.append(torch.stack(per_batch_enzyme_activity).mean(0))
 
         cell_axis = 1 if n_samples > 1 else 0
 

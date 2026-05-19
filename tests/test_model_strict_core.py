@@ -5,8 +5,70 @@ import torch
 from scvi import REGISTRY_KEYS
 from torch_geometric.utils.convert import from_networkx
 
+from mern import MERN
 from mern._constants import GRAPH_REGISTRY_KEYS, MODULE_KEYS
+from mern._custom_optimizer import create_rmsprop_optimizer
+from mern._mern_data_splitting import MERNDataSplitter
 from mern._graph_dataloader import GraphDataLoader
+
+
+STRICT_MODEL_KWARGS = {
+    "n_hidden": 256,
+    "n_layers": 2,
+    "n_metabolic_dim": 25,
+    "n_background_dim": 15,
+    "encode_covariates": False,
+    "positive_met_dims": False,
+    "fixed_rxn_genes": False,
+    "strict_met_back_separation": True,
+    "rxn_genes_bias": True,
+    "fixed_graph_cell_kl": False,
+}
+
+STRICT_LOSS_KWARGS = {
+    "kl_weight": 0.001,
+    "graph_kl_weight": 0.1,
+    "data_elbo_weight": 1.0,
+    "graph_elbo_weight": 0.2,
+    "rxn_genes_weight": 0.5,
+    "background_to_metabolic_weight": 30000,
+}
+
+
+@pytest.fixture
+def full_strict_model(general_package_adata_graph_rxn_genes):
+    torch.manual_seed(1)
+    np.random.seed(1)
+
+    adata, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
+    adata = adata.copy()
+    graph = graph.copy()
+    MERN.setup_anndata(adata, layer="counts", batch_key=None)
+    return MERN(adata, graph, rxn_to_genes, **STRICT_MODEL_KWARGS)
+
+
+@pytest.fixture
+def batch_corrected_model(general_package_adata_graph_rxn_genes):
+    torch.manual_seed(2)
+    np.random.seed(2)
+
+    adata, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
+    adata = adata.copy()
+    graph = graph.copy()
+    MERN.setup_anndata(adata, layer="counts", batch_key="Phase")
+    return MERN(
+        adata,
+        graph,
+        rxn_to_genes,
+        n_hidden=32,
+        n_layers=1,
+        n_metabolic_dim=5,
+        n_background_dim=3,
+        dropout_rate=0.0,
+        encode_covariates=False,
+        strict_met_back_separation=True,
+        rxn_genes_bias=True,
+    )
 
 
 def _dense_counts(adata):
@@ -64,6 +126,57 @@ def test_support_inputs_select_expected_features_and_counts(
     is_metabolic = (adata.var["Metabolic Gene"] == "Metabolic").to_numpy()
     assert np.all(counts[:, is_metabolic].sum(axis=1) > 0)
     assert np.all(counts[:, ~is_metabolic].sum(axis=1) > 0)
+
+
+def test_strict_model_kwargs_reach_core_components(full_strict_model):
+    module = full_strict_model.module
+    decoder = module.decoder
+    rxn_gene_layer = decoder.rxn_gene_layer
+    n_reactions = len(full_strict_model.vertex_names_ordered)
+
+    assert module.n_hidden == 256
+    assert module.n_layers == 2
+    assert module.n_metabolic_dim == 25
+    assert module.n_background_dim == 15
+    assert module.encode_covariates is False
+    assert module.positive_met_dims is False
+    assert module.fixed_graph_cell_kl is False
+
+    assert module.m_encoder.mean_encoder.out_features == 25
+    assert module.b_encoder.mean_encoder.out_features == 15
+    assert module.v_encoder.vrepr.shape == (n_reactions, 25)
+    assert decoder.back_linear.in_features == 15
+    assert decoder.fixed_rxn_genes is False
+    assert decoder.strict_met_back_separation is True
+    assert rxn_gene_layer.strict_met_back_separation is True
+    assert rxn_gene_layer.linear.bias is not None
+    assert rxn_gene_layer.linear.in_features == n_reactions
+    assert rxn_gene_layer.linear.out_features == full_strict_model.adata.n_vars
+
+
+def test_batch_key_reaches_model_and_decoder_covariates(batch_corrected_model):
+    n_reactions = len(batch_corrected_model.vertex_names_ordered)
+
+    assert batch_corrected_model.summary_stats.n_batch == 3
+    assert batch_corrected_model.module.n_batch == 3
+    assert batch_corrected_model.module.encode_covariates is False
+    assert batch_corrected_model.module.decoder.n_cov == 3
+    assert batch_corrected_model.module.decoder.rxn_gene_layer.n_cov == 3
+    assert batch_corrected_model.module.decoder.rxn_gene_layer.linear.in_features == (
+        n_reactions + 3
+    )
+    assert batch_corrected_model.module.decoder.back_linear.in_features == 3 + 3
+
+    weights = batch_corrected_model.get_rxn_genes_weights(return_numpy=False)
+    assert list(weights.columns[-3:]) == [
+        "decoder_covariate_one_hot_0",
+        "decoder_covariate_one_hot_1",
+        "decoder_covariate_one_hot_2",
+    ]
+
+    batch = _one_model_batch(batch_corrected_model, batch_size=12)
+    observed_batch_codes = batch["cells"][REGISTRY_KEYS.BATCH_KEY].squeeze(-1)
+    assert set(observed_batch_codes.detach().cpu().numpy().astype(int)).issubset({0, 1, 2})
 
 
 def test_model_strict_preserves_feature_order(general_package_model):
@@ -150,6 +263,56 @@ def test_graph_dataloader_negative_samples_exclude_positive_edges_and_self_loops
     assert torch.all(graph_batch[GRAPH_REGISTRY_KEYS.ESGN_KEY][positive_edge_count:] == 1)
 
 
+def test_deterministic_splitter_and_dataloader_contract(full_strict_model):
+    splitter = MERNDataSplitter(
+        full_strict_model.adata_manager,
+        full_strict_model.graph,
+        train_size=0.8,
+        validation_size=0.2,
+        shuffle_set_split=False,
+        batch_size=32,
+    )
+    splitter.setup()
+
+    assert splitter.val_idx.tolist() == list(range(20))
+    assert splitter.train_idx.tolist() == list(range(20, 100))
+    assert splitter.test_idx.tolist() == []
+
+    batch = next(iter(splitter.train_dataloader()))
+    cells = batch["cells"]
+    graph_batch = batch["graph"]
+    positive_edge_count = full_strict_model.graph.edge_index.shape[1]
+
+    assert cells[REGISTRY_KEYS.X_KEY].shape == (32, full_strict_model.adata.n_vars)
+    assert graph_batch[GRAPH_REGISTRY_KEYS.EIDX_KEY].shape[0] == 2
+    assert graph_batch[GRAPH_REGISTRY_KEYS.EWT_KEY].shape[0] == positive_edge_count * 2
+    assert graph_batch[GRAPH_REGISTRY_KEYS.ESGN_KEY].shape[0] == positive_edge_count * 2
+
+    positive_edges = {
+        tuple(edge)
+        for edge in full_strict_model.graph.edge_index.t()
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(int)
+        .tolist()
+    }
+    negative_edges = (
+        graph_batch[GRAPH_REGISTRY_KEYS.EIDX_KEY][:, positive_edge_count:]
+        .t()
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(int)
+        .tolist()
+    )
+    assert negative_edges
+    assert all(tuple(edge) not in positive_edges for edge in negative_edges)
+    assert all(source != target for source, target in negative_edges)
+    assert torch.all(graph_batch[GRAPH_REGISTRY_KEYS.EWT_KEY][positive_edge_count:] == 0)
+    assert torch.all(graph_batch[GRAPH_REGISTRY_KEYS.ESGN_KEY][positive_edge_count:] == 1)
+
+
 def test_rxn_gene_layer_strict_mask_matches_annotations_and_zeroes_disallowed_weights(
     general_package_model,
 ):
@@ -217,6 +380,119 @@ def test_model_strict_forward_shapes_and_decoder_separation(general_package_mode
     assert list(decoding["enzyme_activity"].columns) == general_package_model.vertex_names_ordered
 
 
+def test_strict_forward_semantics(full_strict_model):
+    batch = _one_model_batch(full_strict_model, batch_size=32)
+    inference_outputs, generative_outputs = _model_forward_outputs(full_strict_model, batch)
+    batch_size = batch["cells"][REGISTRY_KEYS.X_KEY].shape[0]
+    n_genes = full_strict_model.adata.n_vars
+    n_reactions = len(full_strict_model.vertex_names_ordered)
+    is_metabolic = full_strict_model.module.gene_is_metabolic
+
+    assert inference_outputs[MODULE_KEYS.QM_KEY].loc.shape == (batch_size, 25)
+    assert inference_outputs[MODULE_KEYS.QB_KEY].loc.shape == (batch_size, 15)
+    assert inference_outputs[MODULE_KEYS.QV_KEY].loc.shape == (n_reactions, 25)
+    assert torch.isfinite(inference_outputs[MODULE_KEYS.METABOLIC_LIBRARY_KEY]).all()
+    assert torch.isfinite(inference_outputs[MODULE_KEYS.BACKGROUND_LIBRARY_KEY]).all()
+
+    enzyme_activity = generative_outputs[MODULE_KEYS.ENZYME_ACTIVITY_KEY]
+    assert enzyme_activity.shape == (batch_size, n_reactions)
+    assert torch.all(enzyme_activity >= 0)
+
+    met_mu = generative_outputs[MODULE_KEYS.PX_MET_KEY].get_normalized("mu")
+    bg_mu = generative_outputs[MODULE_KEYS.PX_BACK_KEY].get_normalized("mu")
+    full_mu = generative_outputs[MODULE_KEYS.PX_KEY].get_normalized("mu")
+    assert met_mu.shape == (batch_size, n_genes)
+    assert bg_mu.shape == (batch_size, n_genes)
+    assert torch.allclose(full_mu, met_mu + bg_mu)
+
+    met_scale = generative_outputs[MODULE_KEYS.PX_MET_KEY].get_normalized("scale")
+    bg_scale = generative_outputs[MODULE_KEYS.PX_BACK_KEY].get_normalized("scale")
+    assert torch.all(met_scale[:, ~is_metabolic] == 0)
+    assert torch.all(bg_scale[:, is_metabolic] == 0)
+    assert torch.allclose(met_scale[:, is_metabolic].sum(dim=1), torch.ones(batch_size), atol=1e-5)
+    assert torch.allclose(bg_scale[:, ~is_metabolic].sum(dim=1), torch.ones(batch_size), atol=1e-5)
+
+
+def test_batch_transform_changes_module_generative_outputs(batch_corrected_model):
+    batch = _one_model_batch(batch_corrected_model, batch_size=16)
+    batch_corrected_model.module.eval()
+    with torch.no_grad():
+        inference_outputs = batch_corrected_model.module.inference(
+            **batch_corrected_model.module._get_inference_input(batch)
+        )
+        generative_input = batch_corrected_model.module._get_generative_input(
+            batch, inference_outputs
+        )
+        batch_0_outputs = batch_corrected_model.module.generative(
+            **generative_input,
+            transform_batch=torch.tensor(0),
+        )
+        batch_1_outputs = batch_corrected_model.module.generative(
+            **generative_input,
+            transform_batch=torch.tensor(1),
+        )
+
+    batch_0_mu = batch_0_outputs[MODULE_KEYS.PX_KEY].get_normalized("mu")
+    batch_1_mu = batch_1_outputs[MODULE_KEYS.PX_KEY].get_normalized("mu")
+    batch_0_met_scale = batch_0_outputs[MODULE_KEYS.PX_MET_KEY].get_normalized("scale")
+    batch_1_met_scale = batch_1_outputs[MODULE_KEYS.PX_MET_KEY].get_normalized("scale")
+    is_metabolic = batch_corrected_model.module.gene_is_metabolic
+
+    assert not torch.allclose(batch_0_mu, batch_1_mu)
+    assert not torch.allclose(batch_0_met_scale, batch_1_met_scale)
+    assert torch.all(batch_0_met_scale[:, ~is_metabolic] == 0)
+    assert torch.all(batch_1_met_scale[:, ~is_metabolic] == 0)
+
+
+def test_batch_transform_reaches_downstream_decoding_apis(batch_corrected_model):
+    indices = [0, 1, 2, 3]
+    categories = batch_corrected_model.adata.obs["Phase"].cat.categories
+    first_batch = categories[0]
+    second_batch = categories[1]
+
+    torch.manual_seed(10)
+    first_decoding = batch_corrected_model.get_decoding(
+        indices=indices,
+        transform_batch=[first_batch],
+        batch_size=4,
+        return_numpy=True,
+    )
+    torch.manual_seed(10)
+    second_decoding = batch_corrected_model.get_decoding(
+        indices=indices,
+        transform_batch=[second_batch],
+        batch_size=4,
+        return_numpy=True,
+    )
+
+    assert not np.allclose(first_decoding["full_mu"], second_decoding["full_mu"])
+    assert np.allclose(
+        first_decoding["full_mu"],
+        first_decoding["met_mu"] + first_decoding["bg_mu"],
+    )
+
+    torch.manual_seed(20)
+    first_expression = batch_corrected_model.get_normalized_expression(
+        indices=indices,
+        transform_batch=[first_batch],
+        library_size="latent",
+        batch_size=4,
+        return_numpy=True,
+    )
+    torch.manual_seed(20)
+    second_expression = batch_corrected_model.get_normalized_expression(
+        indices=indices,
+        transform_batch=[second_batch],
+        library_size="latent",
+        batch_size=4,
+        return_numpy=True,
+    )
+
+    assert first_expression.shape == (len(indices), batch_corrected_model.adata.n_vars)
+    assert second_expression.shape == (len(indices), batch_corrected_model.adata.n_vars)
+    assert not np.allclose(first_expression, second_expression)
+
+
 def test_loss_terms_are_finite_and_strict_auxiliary_losses_are_zero(
     general_package_model,
 ):
@@ -231,6 +507,77 @@ def test_loss_terms_are_finite_and_strict_auxiliary_losses_are_zero(
     assert torch.isfinite(loss_output.extra_metrics["kl_v"])
     assert loss_output.extra_metrics["rxns_to_genes_loss"] == 0
     assert loss_output.extra_metrics["background_to_metabolic_loss"] == 0
+
+
+def test_loss_uses_expected_weighted_terms(full_strict_model):
+    batch = _one_model_batch(full_strict_model, batch_size=32)
+    inference_outputs, generative_outputs = _model_forward_outputs(full_strict_model, batch)
+    loss_output = full_strict_model.module.loss(
+        batch,
+        inference_outputs,
+        generative_outputs,
+        **STRICT_LOSS_KWARGS,
+    )
+
+    x_elbo = (
+        loss_output.reconstruction_loss["reconstruction_loss"]
+        + STRICT_LOSS_KWARGS["kl_weight"]
+        * (
+            loss_output.kl_local[MODULE_KEYS.KL_M_KEY]
+            + loss_output.kl_local[MODULE_KEYS.KL_B_KEY]
+        )
+        + loss_output.kl_local[MODULE_KEYS.KL_LM_KEY]
+        + loss_output.kl_local[MODULE_KEYS.KL_LB_KEY]
+    ).mean()
+    graph_elbo = (
+        loss_output.extra_metrics["g_nll"]
+        + STRICT_LOSS_KWARGS["graph_kl_weight"] * loss_output.extra_metrics["kl_v"]
+    )
+    expected_loss = (
+        STRICT_LOSS_KWARGS["data_elbo_weight"] * x_elbo
+        + STRICT_LOSS_KWARGS["graph_elbo_weight"] * graph_elbo
+        + STRICT_LOSS_KWARGS["rxn_genes_weight"] * loss_output.extra_metrics["rxns_to_genes_loss"]
+        + STRICT_LOSS_KWARGS["background_to_metabolic_weight"]
+        * loss_output.extra_metrics["background_to_metabolic_loss"]
+    )
+
+    assert torch.isfinite(loss_output.loss)
+    assert torch.allclose(loss_output.loss, expected_loss)
+    assert loss_output.extra_metrics["rxns_to_genes_loss"] == 0
+    assert loss_output.extra_metrics["background_to_metabolic_loss"] == 0
+
+
+def test_strict_masks_survive_optimizer_step(full_strict_model):
+    batch = _one_model_batch(full_strict_model, batch_size=32)
+    optimizer = create_rmsprop_optimizer(full_strict_model.module.parameters(), lr=2e-3)
+
+    full_strict_model.module.train()
+    inference_outputs = full_strict_model.module.inference(
+        **full_strict_model.module._get_inference_input(batch)
+    )
+    generative_outputs = full_strict_model.module.generative(
+        **full_strict_model.module._get_generative_input(batch, inference_outputs)
+    )
+    loss_output = full_strict_model.module.loss(
+        batch,
+        inference_outputs,
+        generative_outputs,
+        **STRICT_LOSS_KWARGS,
+    )
+    optimizer.zero_grad()
+    loss_output.loss.backward()
+    optimizer.step()
+
+    _model_forward_outputs(full_strict_model, batch)
+    layer = full_strict_model.module.decoder.rxn_gene_layer
+    strict_weights = layer.linear.weight.detach()
+    disallowed_mask = ~layer.weight_mask.bool()
+
+    assert torch.isfinite(loss_output.loss)
+    assert torch.all(strict_weights >= 0)
+    assert torch.all(
+        strict_weights[:, : len(full_strict_model.vertex_names_ordered)][disallowed_mask] == 0
+    )
 
 
 def test_loss_weights_scale_cell_and_graph_terms(general_package_model):
