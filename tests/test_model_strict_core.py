@@ -34,6 +34,18 @@ STRICT_LOSS_KWARGS = {
     "background_to_metabolic_weight": 30000,
 }
 
+SCRIPT_PLAN_KWARGS = {
+    "max_kl_weight": 0.001,
+    "graph_kl_weight": 0.1,
+    "data_elbo_weight": 1.0,
+    "graph_elbo_weight": 0.2,
+    "rxn_genes_weight": 0.5,
+    "background_to_metabolic_weight": 30000,
+    "lr": 2e-3,
+    "n_steps_kl_warmup": 0,
+    "n_epochs_kl_warmup": None,
+}
+
 
 @pytest.fixture
 def full_strict_model(general_package_adata_graph_rxn_genes):
@@ -91,6 +103,41 @@ def _model_forward_outputs(model, batch):
             **model.module._get_generative_input(batch, inference_outputs)
         )
     return inference_outputs, generative_outputs
+
+
+def test_mouse_intestine_kl_search_script_defaults_build_expected_contract(
+    general_package_adata_graph_rxn_genes,
+):
+    adata, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
+
+    assert adata.shape == (100, 5800)
+    assert int(adata.var["highly_variable_metabolic"].sum()) == 800
+    assert int(adata.var["highly_variable_background"].sum()) == 5000
+    assert not (
+        adata.var["highly_variable_metabolic"] & adata.var["highly_variable_background"]
+    ).any()
+    assert int((adata.var["Metabolic Gene"] == "Metabolic").sum()) == 800
+
+    assert graph.number_of_nodes() == 1213
+    assert graph.number_of_edges() == 5587
+    assert len(list(nx.selfloop_edges(graph))) == 5
+    assert set(graph.nodes()).issubset(rxn_to_genes)
+
+    torch.manual_seed(1)
+    np.random.seed(1)
+    adata = adata.copy()
+    graph = graph.copy()
+    MERN.setup_anndata(adata, layer="counts", batch_key=None)
+    model = MERN(adata, graph, rxn_to_genes, **STRICT_MODEL_KWARGS)
+
+    assert list(model.gene_names_ordered) == list(adata.var_names)
+    assert list(model.vertex_names_ordered) == list(graph.nodes())
+    assert model.graph.edge_index.shape == (2, graph.number_of_edges())
+    assert model.graph.edge_attr.shape == (graph.number_of_edges(), 2)
+    assert model.module.n_hidden == STRICT_MODEL_KWARGS["n_hidden"]
+    assert model.module.n_layers == STRICT_MODEL_KWARGS["n_layers"]
+    assert model.module.n_metabolic_dim == STRICT_MODEL_KWARGS["n_metabolic_dim"]
+    assert model.module.n_background_dim == STRICT_MODEL_KWARGS["n_background_dim"]
 
 
 def test_support_inputs_select_expected_features_and_counts(
@@ -313,6 +360,32 @@ def test_deterministic_splitter_and_dataloader_contract(full_strict_model):
     assert torch.all(graph_batch[GRAPH_REGISTRY_KEYS.ESGN_KEY][positive_edge_count:] == 1)
 
 
+def test_module_input_mapping_matches_mouse_intestine_batch_contract(full_strict_model):
+    batch = _one_model_batch(full_strict_model, batch_size=32)
+    positive_edge_count = full_strict_model.graph.edge_index.shape[1]
+
+    inference_input = full_strict_model.module._get_inference_input(batch)
+    inference_outputs = full_strict_model.module.inference(**inference_input)
+    generative_input = full_strict_model.module._get_generative_input(batch, inference_outputs)
+
+    assert inference_input[MODULE_KEYS.X_KEY].shape == (32, full_strict_model.adata.n_vars)
+    assert inference_input[MODULE_KEYS.BATCH_INDEX_KEY].shape == (32, 1)
+    assert inference_input[MODULE_KEYS.EIDX_KEY].shape == (2, positive_edge_count * 2)
+    assert inference_input[MODULE_KEYS.EWT_KEY].shape == (positive_edge_count * 2,)
+    assert inference_input[MODULE_KEYS.ESGN_KEY].shape == (positive_edge_count * 2,)
+
+    assert torch.all(inference_input[MODULE_KEYS.EWT_KEY][:positive_edge_count] == 1)
+    assert torch.all(inference_input[MODULE_KEYS.EWT_KEY][positive_edge_count:] == 0)
+    assert torch.all(inference_input[MODULE_KEYS.ESGN_KEY] == 1)
+
+    assert generative_input[MODULE_KEYS.M_KEY] is inference_outputs[MODULE_KEYS.M_KEY]
+    assert generative_input[MODULE_KEYS.B_KEY] is inference_outputs[MODULE_KEYS.B_KEY]
+    assert generative_input[MODULE_KEYS.V_KEY] is inference_outputs[MODULE_KEYS.V_KEY]
+    assert generative_input[MODULE_KEYS.EIDX_KEY] is batch["graph"][GRAPH_REGISTRY_KEYS.EIDX_KEY]
+    assert generative_input[MODULE_KEYS.EWT_KEY] is batch["graph"][GRAPH_REGISTRY_KEYS.EWT_KEY]
+    assert generative_input[MODULE_KEYS.ESGN_KEY] is batch["graph"][GRAPH_REGISTRY_KEYS.ESGN_KEY]
+
+
 def test_rxn_gene_layer_strict_mask_matches_annotations_and_zeroes_disallowed_weights(
     general_package_model,
 ):
@@ -493,6 +566,64 @@ def test_batch_transform_reaches_downstream_decoding_apis(batch_corrected_model)
     assert not np.allclose(first_expression, second_expression)
 
 
+def test_get_latent_representation_returns_cell_and_graph_latents(full_strict_model):
+    indices = np.arange(6)
+    n_reactions = len(full_strict_model.vertex_names_ordered)
+
+    with pytest.raises(RuntimeError, match="untrained model"):
+        full_strict_model.get_latent_representation(
+            indices=indices,
+            batch_size=len(indices),
+        )
+
+    full_strict_model.is_trained_ = True
+    metabolic_latent, background_latent, graph_latent = (
+        full_strict_model.get_latent_representation(
+            indices=indices,
+            batch_size=len(indices),
+        )
+    )
+
+    assert metabolic_latent.shape == (len(indices), 25)
+    assert background_latent.shape == (len(indices), 15)
+    assert graph_latent.shape == (n_reactions, 25)
+    assert np.isfinite(metabolic_latent).all()
+    assert np.isfinite(background_latent).all()
+    assert np.isfinite(graph_latent).all()
+
+    (
+        metabolic_mean,
+        metabolic_var,
+        background_mean,
+        background_var,
+        graph_mean,
+        graph_var,
+    ) = full_strict_model.get_latent_representation(
+        indices=indices,
+        batch_size=len(indices),
+        return_dist=True,
+    )
+
+    assert metabolic_mean.shape == (len(indices), 25)
+    assert metabolic_var.shape == (len(indices), 25)
+    assert background_mean.shape == (len(indices), 15)
+    assert background_var.shape == (len(indices), 15)
+    assert graph_mean.shape == (n_reactions, 25)
+    assert graph_var.shape == (n_reactions, 25)
+    for value in [
+        metabolic_mean,
+        metabolic_var,
+        background_mean,
+        background_var,
+        graph_mean,
+        graph_var,
+    ]:
+        assert np.isfinite(value).all()
+    assert np.all(metabolic_var >= 0)
+    assert np.all(background_var >= 0)
+    assert np.all(graph_var >= 0)
+
+
 def test_loss_terms_are_finite_and_strict_auxiliary_losses_are_zero(
     general_package_model,
 ):
@@ -507,6 +638,30 @@ def test_loss_terms_are_finite_and_strict_auxiliary_losses_are_zero(
     assert torch.isfinite(loss_output.extra_metrics["kl_v"])
     assert loss_output.extra_metrics["rxns_to_genes_loss"] == 0
     assert loss_output.extra_metrics["background_to_metabolic_loss"] == 0
+
+
+def test_graph_loss_uses_positive_and_negative_edges(full_strict_model):
+    batch = _one_model_batch(full_strict_model, batch_size=32)
+    inference_outputs, generative_outputs = _model_forward_outputs(full_strict_model, batch)
+    loss_output = full_strict_model.module.loss(
+        batch,
+        inference_outputs,
+        generative_outputs,
+        **STRICT_LOSS_KWARGS,
+    )
+
+    ewt = batch["graph"][GRAPH_REGISTRY_KEYS.EWT_KEY]
+    pg = generative_outputs[MODULE_KEYS.PG_KEY]
+    g_nll_by_edge = -pg.log_prob(ewt)
+    positive_mask = ewt != 0
+    negative_mask = ~positive_mask
+
+    assert positive_mask.sum().item() == full_strict_model.graph.edge_index.shape[1]
+    assert negative_mask.sum().item() == full_strict_model.graph.edge_index.shape[1]
+    assert g_nll_by_edge.shape == ewt.shape
+    assert torch.isfinite(g_nll_by_edge[positive_mask]).all()
+    assert torch.isfinite(g_nll_by_edge[negative_mask]).all()
+    assert torch.isfinite(loss_output.extra_metrics["g_nll"])
 
 
 def test_loss_uses_expected_weighted_terms(full_strict_model):
@@ -545,6 +700,76 @@ def test_loss_uses_expected_weighted_terms(full_strict_model):
     assert torch.allclose(loss_output.loss, expected_loss)
     assert loss_output.extra_metrics["rxns_to_genes_loss"] == 0
     assert loss_output.extra_metrics["background_to_metabolic_loss"] == 0
+
+
+def test_fixed_graph_cell_kl_switches_graph_kl_to_cell_kl_weight(full_strict_model):
+    batch = _one_model_batch(full_strict_model, batch_size=32)
+    inference_outputs, generative_outputs = _model_forward_outputs(full_strict_model, batch)
+
+    common_loss_kwargs = {
+        "kl_weight": 0.25,
+        "graph_kl_weight": 0.0,
+        "data_elbo_weight": 0.0,
+        "graph_elbo_weight": 1.0,
+        "rxn_genes_weight": 0.0,
+        "background_to_metabolic_weight": 0.0,
+    }
+
+    full_strict_model.module.fixed_graph_cell_kl = False
+    graph_weighted_loss = full_strict_model.module.loss(
+        batch,
+        inference_outputs,
+        generative_outputs,
+        **common_loss_kwargs,
+    )
+    full_strict_model.module.fixed_graph_cell_kl = True
+    cell_weighted_loss = full_strict_model.module.loss(
+        batch,
+        inference_outputs,
+        generative_outputs,
+        **common_loss_kwargs,
+    )
+    full_strict_model.module.fixed_graph_cell_kl = False
+
+    expected_delta = common_loss_kwargs["kl_weight"] * cell_weighted_loss.extra_metrics["kl_v"]
+    assert torch.allclose(cell_weighted_loss.loss - graph_weighted_loss.loss, expected_delta)
+
+
+def test_non_strict_auxiliary_losses_are_active(general_package_adata_graph_rxn_genes):
+    torch.manual_seed(3)
+    np.random.seed(3)
+
+    adata, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
+    adata = adata.copy()
+    graph = graph.copy()
+    MERN.setup_anndata(adata, layer="counts", batch_key=None)
+    model = MERN(
+        adata,
+        graph,
+        rxn_to_genes,
+        n_hidden=32,
+        n_layers=1,
+        n_metabolic_dim=5,
+        n_background_dim=3,
+        dropout_rate=0.0,
+        encode_covariates=False,
+        strict_met_back_separation=False,
+        rxn_genes_bias=True,
+    )
+
+    batch = _one_model_batch(model, batch_size=8)
+    inference_outputs, generative_outputs = _model_forward_outputs(model, batch)
+    loss_output = model.module.loss(
+        batch,
+        inference_outputs,
+        generative_outputs,
+        rxn_genes_weight=0.5,
+        background_to_metabolic_weight=30000,
+    )
+
+    assert torch.isfinite(loss_output.loss)
+    assert loss_output.extra_metrics["rxns_to_genes_loss"] > 0
+    assert loss_output.extra_metrics["background_to_metabolic_loss"] > 0
 
 
 def test_strict_masks_survive_optimizer_step(full_strict_model):
@@ -637,3 +862,71 @@ def test_loss_weights_scale_cell_and_graph_terms(general_package_model):
         graph_kl_weight=0.5,
     )
     assert torch.allclose(graph_elbo_weighted.loss, 3.0 * weighted_graph_kl.loss)
+
+
+def test_mouse_intestine_script_default_train_and_post_train_outputs(
+    general_package_adata_graph_rxn_genes,
+):
+    torch.manual_seed(1)
+    np.random.seed(1)
+
+    adata, graph, rxn_to_genes = general_package_adata_graph_rxn_genes
+    adata = adata.copy()
+    graph = graph.copy()
+    MERN.setup_anndata(adata, layer="counts", batch_key=None)
+    model = MERN(adata, graph, rxn_to_genes, **STRICT_MODEL_KWARGS)
+
+    initial_state_abs_sum = sum(
+        tensor.detach().abs().sum().item()
+        for tensor in model.module.state_dict().values()
+        if torch.is_tensor(tensor)
+    )
+    model.train(
+        accelerator="cpu",
+        devices=1,
+        max_epochs=1,
+        early_stopping=False,
+        train_size=0.8,
+        validation_size=0.2,
+        shuffle_set_split=False,
+        batch_size=32,
+        plan_kwargs=SCRIPT_PLAN_KWARGS,
+        enable_checkpointing=False,
+        logger=False,
+        enable_model_summary=False,
+        enable_progress_bar=False,
+    )
+    trained_state_abs_sum = sum(
+        tensor.detach().abs().sum().item()
+        for tensor in model.module.state_dict().values()
+        if torch.is_tensor(tensor)
+    )
+
+    assert trained_state_abs_sum != initial_state_abs_sum
+    assert model.history is None
+
+    indices = np.arange(4)
+    decoding = model.get_decoding(indices=indices, batch_size=4, return_numpy=True)
+    assert set(decoding) == {
+        "enzyme_activity",
+        "met_mu",
+        "met_scale",
+        "bg_mu",
+        "bg_scale",
+        "full_mu",
+    }
+    assert decoding["enzyme_activity"].shape == (len(indices), len(model.vertex_names_ordered))
+    for key in ["met_mu", "met_scale", "bg_mu", "bg_scale", "full_mu"]:
+        assert decoding[key].shape == (len(indices), model.adata.n_vars)
+        assert np.isfinite(decoding[key]).all()
+    assert np.isfinite(decoding["enzyme_activity"]).all()
+    assert np.allclose(decoding["full_mu"], decoding["met_mu"] + decoding["bg_mu"])
+
+    normalized = model.get_normalized_expression(
+        indices=indices,
+        library_size="latent",
+        batch_size=4,
+        return_numpy=True,
+    )
+    assert normalized.shape == (len(indices), model.adata.n_vars)
+    assert np.isfinite(normalized).all()
