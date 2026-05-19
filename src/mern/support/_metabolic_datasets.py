@@ -852,17 +852,13 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         rxn_genes
             Mapping from rxns to genes
         """
-        rxn_gene_symbols = self.rxn_genes.copy()
+        rxn_gene_symbols = {rxn: list(genes) for rxn, genes in self.rxn_genes.items()}
 
-        # use features here
-        if config.ANNDATA_KEY not in rna.uns:
-                raise ValueError(
-                    f"The dataset has not been configured. "
-                    f"Please call `configure_dataset` first!"
-                )
-        
-        dataset_genes = set(rna.uns[config.ANNDATA_KEY]['features'])
-    
+        if not subset_genes:
+            return rxn_gene_symbols
+
+        dataset_genes = set(rna.var_names)
+
         # filter rxn genes based on genes in dataset
         for rxn in rxn_gene_symbols:
             temp_genes = set(rxn_gene_symbols[rxn])
