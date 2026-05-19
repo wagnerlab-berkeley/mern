@@ -119,8 +119,8 @@ def test_mouse_intestine_kl_search_script_defaults_build_expected_contract(
     assert int((adata.var["Metabolic Gene"] == "Metabolic").sum()) == 800
 
     assert graph.number_of_nodes() == 1213
-    assert graph.number_of_edges() == 5587
-    assert len(list(nx.selfloop_edges(graph))) == 5
+    assert graph.number_of_edges() == 5582
+    assert not list(nx.selfloop_edges(graph))
     assert set(graph.nodes()).issubset(rxn_to_genes)
 
     torch.manual_seed(1)
@@ -241,10 +241,6 @@ def test_model_strict_preserves_feature_order(general_package_model):
     assert list(decoding["full_mu"].columns) == list(general_package_model.adata.var_names)
 
 
-@pytest.mark.xfail(
-    reason="The current fixture graph contains five natural self-loops despite self_loops=False.",
-    strict=True,
-)
 def test_support_graph_has_no_self_loops(general_package_adata_graph_rxn_genes):
     _, graph, _ = general_package_adata_graph_rxn_genes
     assert not list(nx.selfloop_edges(graph))

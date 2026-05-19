@@ -658,7 +658,10 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
             for j in range(len(self.rxns)):
 
                 rxn2 = self.rxns[j]
-                if rxn2 == rxn1: continue
+                # 01100.kgml lists some reactions twice (distinct entries, same name).
+                # Object identity misses those pairs and yields spurious (rn:Rx, rn:Rx) edges.
+                if rxn1.name == rxn2.name:
+                    continue
                 reac2 = rxn2.substrates
                 reac2 = [r.name for r in reac2]
                 prod2 = rxn2.products
