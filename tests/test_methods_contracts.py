@@ -18,7 +18,12 @@ from mern._constants import GRAPH_REGISTRY_KEYS, MODULE_KEYS
 from mern._custom_optimizer import create_rmsprop_optimizer
 from mern._graph_dataloader import GraphDataLoader
 from mern._module import MERNModule
-from mern.support import KeggKGMLMetabolicDataset
+from mern.support import (
+    KeggKGMLMetabolicDataset,
+    calculate_cophenetic_corr_matrix,
+    calculate_ddps,
+    compare_cophenetic_corr,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -519,3 +524,70 @@ def test_module_can_generate_priors_without_model_wrapper():
     )
     assert torch.allclose(outputs[MODULE_KEYS.PM_KEY].loc, torch.zeros(1, 2))
     assert torch.allclose(outputs[MODULE_KEYS.PB_KEY].scale, torch.ones(1, 2))
+
+
+def test_calculate_ddps_returns_full_linkage_above_ddp_threshold():
+    reactions = ["r1", "r2", "r3"]
+    graph = nx.Graph()
+    graph.add_edges_from([("r1", "r2"), ("r2", "r3")])
+    corr = pd.DataFrame(
+        [
+            [1.0, 0.9, 0.3],
+            [0.9, 1.0, 0.5],
+            [0.3, 0.5, 1.0],
+        ],
+        index=reactions,
+        columns=reactions,
+    )
+
+    rxn_to_ddp, ddp_rxns, kept, linkage_matrix = calculate_ddps(
+        graph,
+        corr,
+        min_corr=0.8,
+        min_size=2,
+    )
+
+    assert kept == [["r1", "r2"]]
+    assert ddp_rxns == {"ddp_0": ["r1", "r2"]}
+    assert rxn_to_ddp.to_dict() == {"r1": "ddp_0", "r2": "ddp_0", "r3": None}
+    assert linkage_matrix.shape == (len(reactions) - 1, 4)
+    assert np.allclose(linkage_matrix[:, 2], [0.1, 0.7])
+
+
+def test_calculate_cophenetic_corr_matrix_returns_reaction_matrix():
+    labels = ["r1", "r2", "r3"]
+    linkage_matrix = np.array([
+        [0.0, 1.0, 0.1, 2.0],
+        [3.0, 2.0, 0.7, 3.0],
+    ])
+
+    cophenetic_corr = calculate_cophenetic_corr_matrix(linkage_matrix, labels)
+
+    assert list(cophenetic_corr.index) == labels
+    assert list(cophenetic_corr.columns) == labels
+    assert np.allclose(np.diag(cophenetic_corr), 1.0)
+    assert np.isclose(cophenetic_corr.loc["r1", "r2"], 0.9)
+    assert np.isclose(cophenetic_corr.loc["r1", "r3"], 0.3)
+    assert np.isclose(cophenetic_corr.loc["r2", "r3"], 0.3)
+
+
+def test_compare_cophenetic_corr_returns_graph_edge_deltas():
+    labels = ["r1", "r2", "r3"]
+    graph = nx.Graph()
+    graph.add_edges_from([("r1", "r2"), ("r2", "r3"), ("r3", "outside")])
+    wt_linkage = np.array([
+        [0.0, 1.0, 0.1, 2.0],
+        [3.0, 2.0, 0.7, 3.0],
+    ])
+    ko_linkage = np.array([
+        [1.0, 2.0, 0.4, 2.0],
+        [3.0, 0.0, 0.8, 3.0],
+    ])
+
+    comparison = compare_cophenetic_corr(wt_linkage, ko_linkage, labels, graph=graph)
+
+    assert comparison["rxn_1"].tolist() == ["r1", "r2"]
+    assert comparison["rxn_2"].tolist() == ["r2", "r3"]
+    assert np.allclose(comparison["wt_cophenetic_corr"], [0.9, 0.3])
+    assert np.allclose(comparison["ko_cophenetic_corr"], [0.2, 0.6])
+    assert np.allclose(comparison["delta_wt_minus_ko"], [0.7, -0.3])

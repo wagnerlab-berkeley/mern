@@ -12,9 +12,10 @@ import sklearn.metrics
 from tqdm import tqdm
 import sklearn
 from scipy.stats import wilcoxon, mannwhitneyu, ranksums, spearmanr
+from scipy.cluster.hierarchy import cophenet
 from statsmodels.stats.multitest import multipletests
 from collections import defaultdict
-from scipy.spatial.distance import pdist
+from scipy.spatial.distance import pdist, squareform
 from sklearn.neighbors import NearestNeighbors
 
 
@@ -458,41 +459,24 @@ def calculate_ddps(
     corr_df: pd.DataFrame,
     min_corr: float = 0.6,
     min_size: int = 3,
-) -> tuple[pd.Series, dict, list[list]]:
+) -> tuple[pd.Series, dict, list[list], np.ndarray]:
     """
     Calculate DDPs by clustering reactions on a graph with a correlation threshold.
-
-    This mirrors the notebook's `get_strict_pathways` + `rxn_clusters` construction:
-    - Start with each node in its own cluster.
-    - Iteratively merge clusters connected by an edge if the *minimum* correlation
-      between any node-pair across the two clusters is >= `min_corr`
-      (i.e., complete-linkage on correlation, restricted to graph edges).
-    - Keep clusters with size >= `min_size`.
-
-    Parameters
-    ----------
-    G
-        Graph whose nodes are reactions (or meta-reactions). May be a superset of the
-        reactions in ``corr_df``; only reactions present in ``corr_df`` are clustered
-        and listed in ``rxn_to_ddp``, and only edges between those reactions are used.
-    corr_df
-        Correlation DataFrame; reactions are ``index`` ∩ ``columns`` (in index order).
-        This set may be a subset of ``G.nodes()`` or otherwise differ from ``G``.
-    min_corr
-        Minimum complete-linkage correlation required to merge two clusters.
-    min_size
-        Minimum cluster size to keep as a DDP.
+    Also returns a SciPy-compatible linkage matrix of the full merge history.
 
     Returns
     -------
     rxn_to_ddp
-        Series with one row per reaction in ``corr_df.index`` ∩ ``corr_df.columns``:
-        ddp_id (e.g. ``"ddp_0"``) if in a kept DDP, else ``None``. Suitable for
-        ``calculate_ddp_scores`` (which ignores unassigned entries via ``dropna``).
+        Series mapping reaction -> ddp_id or None.
     ddp_rxns
-        Dict mapping ddp_id (string) -> list of reactions in that DDP.
+        Dict mapping ddp_id -> list of reactions.
     clusters
-        List of clusters, each a list of reactions.
+        List of kept clusters.
+    linkage_matrix
+        A NumPy array of shape ``(len(nodes) - 1, 4)`` tracking the hierarchical
+        merge history. Distance is represented as ``1.0 - correlation`` for
+        graph-supported merges. Disconnected graph roots are merged at an
+        artificial high distance so SciPy can render a complete dendrogram.
     """
     in_both = corr_df.index.intersection(corr_df.columns)
     nodes = []
@@ -503,7 +487,7 @@ def calculate_ddps(
             nodes.append(r)
 
     if len(nodes) == 0:
-        return pd.Series(dtype=object), {}, []
+        return pd.Series(dtype=object), {}, [], np.empty((0, 4))
 
     # Pre-filter correlation matrix to reactions in corr_df only.
     corr_matrix = corr_df.loc[nodes, nodes].values
@@ -513,16 +497,23 @@ def calculate_ddps(
     node_to_cluster = {node: i for i, node in enumerate(nodes)}
     clusters = {i: {node} for i, node in enumerate(nodes)}
 
+    linkage_rows = []
+    cluster_to_linkage_id = {i: i for i in range(len(nodes))}
+    next_linkage_id = len(nodes)
+
     def get_min_corr(c1: set, c2: set) -> float:
         indices1 = [node_idx[n] for n in c1]
         indices2 = [node_idx[n] for n in c2]
         sub_matrix = corr_matrix[np.ix_(indices1, indices2)]
         return float(np.min(sub_matrix))
 
-    # Iterative merging (restricted to physical graph edges).
+    ddp_clusters = None
+
+    # Iterative complete-linkage merging, restricted to physical graph edges.
+    # DDP calls are frozen at min_corr, but linkage continues below that cutoff.
     while True:
         best_merge = None
-        max_min_corr = -1.0
+        max_min_corr = -np.inf
 
         for u, v in G.edges():
             if u not in node_to_cluster or v not in node_to_cluster:
@@ -533,7 +524,7 @@ def calculate_ddps(
                 continue
 
             current_min = get_min_corr(clusters[c1_id], clusters[c2_id])
-            if current_min >= min_corr and current_min > max_min_corr:
+            if current_min > max_min_corr:
                 max_min_corr = current_min
                 best_merge = (c1_id, c2_id)
 
@@ -541,13 +532,48 @@ def calculate_ddps(
             break
 
         id1, id2 = best_merge
+        if max_min_corr < min_corr and ddp_clusters is None:
+            ddp_clusters = {k: set(v) for k, v in clusters.items()}
+
+        linkage_rows.append([
+            float(cluster_to_linkage_id[id1]),
+            float(cluster_to_linkage_id[id2]),
+            float(1.0 - max_min_corr),
+            float(len(clusters[id1]) + len(clusters[id2])),
+        ])
+
+        cluster_to_linkage_id[id1] = next_linkage_id
+        next_linkage_id += 1
+
         clusters[id1] = clusters[id1].union(clusters[id2])
         for node in clusters[id2]:
             node_to_cluster[node] = id1
         del clusters[id2]
+        del cluster_to_linkage_id[id2]
+
+    if ddp_clusters is None:
+        ddp_clusters = {k: set(v) for k, v in clusters.items()}
+
+    remaining_roots = [(cluster_to_linkage_id[k], len(v)) for k, v in clusters.items()]
+    last_dist = linkage_rows[-1][2] if linkage_rows else 0.0
+    artificial_dist = max(2.0, last_dist + 0.1)
+
+    while len(remaining_roots) > 1:
+        linkage_id1, size1 = remaining_roots.pop()
+        linkage_id2, size2 = remaining_roots.pop()
+
+        linkage_rows.append([
+            float(linkage_id1),
+            float(linkage_id2),
+            float(artificial_dist),
+            float(size1 + size2),
+        ])
+
+        remaining_roots.append((next_linkage_id, size1 + size2))
+        next_linkage_id += 1
 
     # Post-process: keep only clusters meeting min_size, then re-index ddp ids.
-    kept = [sorted(list(c)) for c in clusters.values() if len(c) >= min_size]
+    kept = [sorted(list(c)) for c in ddp_clusters.values() if len(c) >= min_size]
     kept = sorted(kept, key=lambda c: (len(c), c[0] if len(c) else ""), reverse=False)
 
     ddp_rxns: dict[str, list] = {
@@ -558,4 +584,95 @@ def calculate_ddps(
         for rxn in rxns:
             rxn_to_ddp[rxn] = ddp_id
 
-    return pd.Series(rxn_to_ddp, dtype=object), ddp_rxns, kept
+    linkage_matrix = np.array(linkage_rows) if linkage_rows else np.empty((0, 4))
+
+    return pd.Series(rxn_to_ddp, dtype=object), ddp_rxns, kept, linkage_matrix
+
+
+def calculate_cophenetic_corr_matrix(
+    linkage_matrix: np.ndarray,
+    labels: list,
+) -> pd.DataFrame:
+    """
+    Convert a DDP linkage matrix into pairwise cophenetic correlations.
+
+    The linkage matrix from ``calculate_ddps`` stores distance as
+    ``1.0 - correlation``. This helper converts SciPy's cophenetic distances
+    back to correlations and returns a square reaction-by-reaction matrix.
+    """
+    labels = list(labels)
+    n_labels = len(labels)
+
+    if n_labels == 0:
+        return pd.DataFrame(index=labels, columns=labels, dtype=float)
+    if n_labels == 1:
+        return pd.DataFrame([[1.0]], index=labels, columns=labels)
+
+    expected_rows = n_labels - 1
+    if linkage_matrix.shape != (expected_rows, 4):
+        raise ValueError(
+            "linkage_matrix must have shape "
+            f"({expected_rows}, 4) for {n_labels} labels."
+        )
+
+    cophenetic_distances = cophenet(linkage_matrix)
+    cophenetic_corr = 1.0 - squareform(cophenetic_distances)
+    np.fill_diagonal(cophenetic_corr, 1.0)
+
+    return pd.DataFrame(cophenetic_corr, index=labels, columns=labels)
+
+
+def compare_cophenetic_corr(
+    wt_linkage_matrix: np.ndarray,
+    ko_linkage_matrix: np.ndarray,
+    labels: list,
+    graph: nx.Graph | None = None,
+) -> pd.DataFrame:
+    """
+    Compare WT and KO cophenetic correlations as ``WT - KO``.
+
+    If ``graph`` is provided, only direct graph edges among ``labels`` are
+    returned. Otherwise, all unordered reaction pairs are returned.
+    """
+    labels = list(labels)
+    label_set = set(labels)
+    wt_cophenetic = calculate_cophenetic_corr_matrix(wt_linkage_matrix, labels)
+    ko_cophenetic = calculate_cophenetic_corr_matrix(ko_linkage_matrix, labels)
+
+    if graph is None:
+        pairs = itertools.combinations(labels, 2)
+    else:
+        seen_pairs = set()
+        graph_pairs = []
+        for u, v in graph.edges():
+            if u not in label_set or v not in label_set or u == v:
+                continue
+            pair_key = frozenset((u, v))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            graph_pairs.append((u, v))
+        pairs = graph_pairs
+
+    rows = []
+    for rxn_1, rxn_2 in pairs:
+        wt_corr = wt_cophenetic.loc[rxn_1, rxn_2]
+        ko_corr = ko_cophenetic.loc[rxn_1, rxn_2]
+        rows.append({
+            "rxn_1": rxn_1,
+            "rxn_2": rxn_2,
+            "wt_cophenetic_corr": wt_corr,
+            "ko_cophenetic_corr": ko_corr,
+            "delta_wt_minus_ko": wt_corr - ko_corr,
+        })
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "rxn_1",
+            "rxn_2",
+            "wt_cophenetic_corr",
+            "ko_cophenetic_corr",
+            "delta_wt_minus_ko",
+        ],
+    )

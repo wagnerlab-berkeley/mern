@@ -27,7 +27,10 @@ from ._analysis import (
     calculate_pathway_scores,
     calculate_ddp_scores,
     calculate_ddps,
+    calculate_cophenetic_corr_matrix,
+    compare_cophenetic_corr,
 )
+from ._enzyme_activity import average_enzyme_activity
 
 from ._ddp_llm_context import (
     SCHEMA_VERSION as DDP_LLM_SCHEMA_VERSION,
@@ -99,6 +102,9 @@ __all__ = [
     "calculate_pathway_scores",
     "calculate_ddp_scores",
     "calculate_ddps",
+    "calculate_cophenetic_corr_matrix",
+    "compare_cophenetic_corr",
+    "average_enzyme_activity",
     # DDP LLM context export
     "DDP_LLM_SCHEMA_VERSION",
     "DEFAULT_SCORE_INTERPRETATION",
