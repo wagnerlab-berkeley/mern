@@ -72,6 +72,22 @@ def test_average_enzyme_activity_uses_rep_name_suffix_for_seeds(monkeypatch):
     assert seeds == [3008, 1008]
 
 
+def test_average_enzyme_activity_uses_model_rep_name_attribute_for_seeds(monkeypatch):
+    seeds = []
+
+    def fake_set_all_seeds(seed):
+        seeds.append(seed)
+        np.random.seed(seed)
+
+    monkeypatch.setattr(enzyme_activity_module, "_set_all_seeds", fake_set_all_seeds)
+    model = _FakeMERN(["r1"])
+    model._mern_average_rep_name = "mern_rep_4"
+
+    average_enzyme_activity([model], n_samples=1, seed=8, show_progress=False)
+
+    assert seeds == [4008]
+
+
 def test_average_enzyme_activity_forwards_adata_to_models():
     adata = object()
     models = [_FakeMERN(["r1"]), _FakeMERN(["r1"])]

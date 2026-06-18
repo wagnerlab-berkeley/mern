@@ -51,18 +51,24 @@ def average_enzyme_activity(
     if n_samples < 1:
         raise ValueError("--n_samples must be at least 1")
 
-    model_list = list(models)
-    if rep_names is not None and len(rep_names) != len(model_list):
-        raise ValueError("rep_names must have the same length as models.")
+    if rep_names is not None:
+        rep_names = list(rep_names)
 
     enzyme_sum = None
     decode_count = 0
     column_names = None
     cell_index = None
+    model_count = 0
 
-    model_iter = tqdm(model_list, desc="Processing models", disable=not show_progress)
+    model_iter = tqdm(models, desc="Processing models", disable=not show_progress)
     for rep_idx, model in enumerate(model_iter):
-        rep_name = rep_names[rep_idx] if rep_names is not None else rep_idx
+        if rep_names is not None:
+            try:
+                rep_name = rep_names[rep_idx]
+            except IndexError as error:
+                raise ValueError("rep_names must have the same length as models.") from error
+        else:
+            rep_name = getattr(model, "_mern_average_rep_name", rep_idx)
         rep_id = _rep_seed_id(rep_name, rep_idx)
 
         for sample_idx in tqdm(
@@ -90,6 +96,10 @@ def average_enzyme_activity(
 
             enzyme_sum += enzyme_act.values
             decode_count += 1
+        model_count += 1
+
+    if rep_names is not None and len(rep_names) != model_count:
+        raise ValueError("rep_names must have the same length as models.")
 
     if enzyme_sum is None:
         raise ValueError("No models were provided.")

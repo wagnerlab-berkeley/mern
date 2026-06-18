@@ -151,6 +151,51 @@ mern train reps \
   --devices 1
 ```
 
+## Averaging enzyme activity across replicates
+
+After training several replicate models, average stochastic enzyme activity
+decodes with:
+
+```bash
+mern average-enzyme-activity \
+  --dir /path/to/model_reps/reps \
+  --adata_path /path/to/data/cancer_endothelium_pp.h5ad \
+  --species human
+```
+
+By default this reads model directories under `--dir`, decodes each model 8
+times with independent seeds, and writes:
+
+```text
+<dir>/average_enzyme_activity.csv.gz
+```
+
+The command mirrors the old `average_enzyme_activity.py` script. It prepares the
+AnnData with the packaged KEGG support utilities, loads each replicate model on
+CPU by default, calls `mern.support.average_enzyme_activity`, and saves a
+compressed CSV. Override the output path or sampling settings with:
+
+```bash
+mern average-enzyme-activity \
+  --dir /path/to/model_reps/reps \
+  --adata_path /path/to/data/cancer_endothelium_pp.h5ad \
+  --output_path /path/to/average_enzyme_activity.csv.gz \
+  --species human \
+  --n_samples 16 \
+  --seed 8
+```
+
+Use `--accelerator cuda` only if you specifically want model loading/decoding on
+GPU. For Slurm, this can be run as a single follow-up job after replicate
+training finishes:
+
+```bash
+srun mern average-enzyme-activity \
+  --dir "$DATA_DIR/model_reps/reps" \
+  --adata_path "$DATA_DIR/cancer_endothelium_pp.h5ad" \
+  --species human
+```
+
 ### Slurm array wrapper
 
 For larger sweeps, wrap `mern train reps` in a Slurm array script. This mirrors
