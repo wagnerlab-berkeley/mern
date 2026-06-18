@@ -30,6 +30,8 @@ dependencies = [
     "biopython>=1.79",
     "black>=24.0",
     "build>=1.2.0",
+    "igraph",
+    "leidenalg",
     "lightning>=2.0",
     "matplotlib",
     "myst-nb",
@@ -55,6 +57,9 @@ dependencies = [
     "torch-geometric",
     "tqdm",
 ]
+
+[project.scripts]
+mern = "mern.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mern"]
