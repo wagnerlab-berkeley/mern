@@ -22,6 +22,7 @@ from mern.support import (
     KeggKGMLMetabolicDataset,
     calculate_cophenetic_corr_matrix,
     calculate_ddps,
+    calculate_ddp_structural_breaks,
     compare_cophenetic_corr,
 )
 
@@ -591,3 +592,82 @@ def test_compare_cophenetic_corr_returns_graph_edge_deltas():
     assert np.allclose(comparison["wt_cophenetic_corr"], [0.9, 0.3])
     assert np.allclose(comparison["ko_cophenetic_corr"], [0.2, 0.6])
     assert np.allclose(comparison["delta_wt_minus_ko"], [0.7, -0.3])
+
+
+def test_calculate_ddp_structural_breaks_scores_wt_ddp_pairs():
+    labels = ["r1", "r2", "r3"]
+    wt_corr = pd.DataFrame(
+        [
+            [1.0, 0.9, 0.8],
+            [0.9, 1.0, 0.7],
+            [0.8, 0.7, 1.0],
+        ],
+        index=labels,
+        columns=labels,
+    )
+    ko_corr = pd.DataFrame(
+        [
+            [1.0, 0.5, 0.4],
+            [0.5, 1.0, 0.3],
+            [0.4, 0.3, 1.0],
+        ],
+        index=labels,
+        columns=labels,
+    )
+    wt_linkage = np.array([
+        [0.0, 1.0, 0.1, 2.0],
+        [3.0, 2.0, 0.3, 3.0],
+    ])
+    ko_linkage = np.array([
+        [1.0, 2.0, 0.6, 2.0],
+        [3.0, 0.0, 0.8, 3.0],
+    ])
+    rxn_to_ddp = pd.Series({"r1": "ddp_0", "r2": "ddp_0", "r3": "ddp_0"})
+
+    breaks = calculate_ddp_structural_breaks(
+        rxn_to_ddp,
+        wt_corr,
+        wt_linkage,
+        ko_corr,
+        ko_linkage,
+        labels=labels,
+    )
+
+    row = breaks.iloc[0]
+    assert row["rank"] == 1
+    assert row["ddp"] == "ddp_0"
+    assert row["n_reactions"] == 3
+    assert row["n_pairs"] == 3
+    assert np.isclose(row["wt_mean_corr"], 0.8)
+    assert np.isclose(row["ko_mean_corr"], 0.4)
+    assert np.isclose(row["mean_corr_drop"], 0.4)
+    assert np.isclose(row["wt_min_corr"], 0.7)
+    assert np.isclose(row["ko_min_corr"], 0.3)
+    assert np.isclose(row["min_corr_drop"], 0.4)
+    assert np.isclose(row["wt_mean_cophenetic_corr"], (0.9 + 0.7 + 0.7) / 3)
+    assert np.isclose(row["ko_mean_cophenetic_corr"], (0.2 + 0.2 + 0.4) / 3)
+    assert np.isclose(row["mean_cophenetic_drop"], 0.5)
+    assert np.isclose(row["wt_min_cophenetic_corr"], 0.7)
+    assert np.isclose(row["ko_min_cophenetic_corr"], 0.2)
+    assert np.isclose(row["min_cophenetic_drop"], 0.5)
+
+
+def test_calculate_ddp_structural_breaks_filters_weak_wt_ddps():
+    labels = ["r1", "r2", "r3"]
+    corr = pd.DataFrame(np.eye(3), index=labels, columns=labels)
+    linkage = np.array([
+        [0.0, 1.0, 0.1, 2.0],
+        [3.0, 2.0, 0.3, 3.0],
+    ])
+
+    breaks = calculate_ddp_structural_breaks(
+        {"ddp_0": labels},
+        corr,
+        linkage,
+        corr,
+        linkage,
+        labels=labels,
+        min_wt_cophenetic_corr=0.75,
+    )
+
+    assert breaks.empty

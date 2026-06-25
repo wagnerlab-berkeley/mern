@@ -196,6 +196,39 @@ srun mern average-enzyme-activity \
   --species human
 ```
 
+## Evaluating replicate consistency metrics
+
+The old model evaluation scripts are available as package CLI commands. To
+evaluate replicate consistency within each condition directory:
+
+```bash
+mern evaluate-models \
+  --dir /path/to/model_reps \
+  --adata_path /path/to/data.h5ad \
+  --species mouse
+```
+
+This mirrors `model_evaluation.py`: each condition under `--dir` is expected to
+contain replicate model directories, stochastic enzyme activity is averaged over
+8 decode samples by default, and results are written to:
+
+```text
+<dir>/evaluation_results.pkl
+```
+
+To compare two replicate directories directly:
+
+```bash
+mern evaluate-cross-models \
+  --dir1 /path/to/reps_a \
+  --dir2 /path/to/reps_b \
+  --adata_path /path/to/data.h5ad
+```
+
+This mirrors `model_cross_evaluation.py` and writes `vs_<dir2>.pkl` under
+`--dir1`. Both commands keep the old defaults of `--neighbors 100`,
+`--graph_neighbors 25`, `--seed 8`, and CPU model loading.
+
 ### Slurm array wrapper
 
 For larger sweeps, wrap `mern train reps` in a Slurm array script. This mirrors

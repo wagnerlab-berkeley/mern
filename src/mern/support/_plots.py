@@ -64,7 +64,8 @@ def training_plot(
     plt.tight_layout()
 
     return ax
-    
+
+
 def metabolic_topology_plot(
     graph: nx.DiGraph,
     rna: AnnData,

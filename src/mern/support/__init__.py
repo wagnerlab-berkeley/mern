@@ -29,6 +29,7 @@ from ._analysis import (
     calculate_ddps,
     calculate_cophenetic_corr_matrix,
     compare_cophenetic_corr,
+    calculate_ddp_structural_breaks,
 )
 from ._enzyme_activity import average_enzyme_activity
 
@@ -104,6 +105,7 @@ __all__ = [
     "calculate_ddps",
     "calculate_cophenetic_corr_matrix",
     "compare_cophenetic_corr",
+    "calculate_ddp_structural_breaks",
     "average_enzyme_activity",
     # DDP LLM context export
     "DDP_LLM_SCHEMA_VERSION",

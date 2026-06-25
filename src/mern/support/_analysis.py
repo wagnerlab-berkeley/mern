@@ -6,6 +6,7 @@ from anndata import AnnData
 import pickle
 import re
 import itertools
+from typing import Mapping, Sequence
 from Bio import KEGG
 from Bio.KEGG import REST
 import sklearn.metrics
@@ -676,3 +677,140 @@ def compare_cophenetic_corr(
             "delta_wt_minus_ko",
         ],
     )
+
+
+def _as_ddp_rxns(ddps) -> dict:
+    if isinstance(ddps, pd.Series):
+        labels = ddps.dropna()
+        return {ddp: list(labels.index[labels == ddp]) for ddp in pd.unique(labels)}
+    if isinstance(ddps, Mapping):
+        return {ddp: list(rxns) for ddp, rxns in ddps.items()}
+    return {f"ddp_{i}": list(rxns) for i, rxns in enumerate(ddps)}
+
+
+def _matrix_pair_values(matrix: pd.DataFrame, pairs: Sequence[tuple]) -> np.ndarray:
+    return np.array([matrix.loc[rxn_1, rxn_2] for rxn_1, rxn_2 in pairs], dtype=float)
+
+
+def _nan_mean(values: np.ndarray) -> float:
+    values = values[np.isfinite(values)]
+    return float(np.mean(values)) if len(values) else np.nan
+
+
+def _nan_min(values: np.ndarray) -> float:
+    values = values[np.isfinite(values)]
+    return float(np.min(values)) if len(values) else np.nan
+
+
+def calculate_ddp_structural_breaks(
+    ddps,
+    wt_corr_df: pd.DataFrame,
+    wt_linkage_matrix: np.ndarray,
+    ko_corr_df: pd.DataFrame,
+    ko_linkage_matrix: np.ndarray,
+    labels: list | None = None,
+    min_wt_cophenetic_corr: float | None = None,
+) -> pd.DataFrame:
+    """
+    Score how strongly WT DDPs break apart in the KO correlation hierarchy.
+
+    Parameters
+    ----------
+    ddps
+        WT DDPs as either reaction -> DDP labels, DDP -> reactions, or a list of
+        reaction clusters.
+    wt_corr_df, ko_corr_df
+        Matched reaction-by-reaction correlation matrices.
+    wt_linkage_matrix, ko_linkage_matrix
+        Full linkage matrices from ``calculate_ddps`` for WT and KO.
+    labels
+        Reaction order used by both linkage matrices. Defaults to ``wt_corr_df.index``.
+    min_wt_cophenetic_corr
+        Optional robust-DDP filter. If provided, keeps only DDPs whose minimum
+        WT within-DDP cophenetic correlation is greater than this value.
+    """
+    if labels is None:
+        labels = list(wt_corr_df.index)
+    labels = list(labels)
+
+    label_set = set(labels)
+    for name, corr_df in {"wt_corr_df": wt_corr_df, "ko_corr_df": ko_corr_df}.items():
+        missing = label_set.difference(corr_df.index).union(label_set.difference(corr_df.columns))
+        if missing:
+            raise ValueError(f"{name} is missing reactions: {sorted(missing)}")
+
+    wt_cophenetic = calculate_cophenetic_corr_matrix(wt_linkage_matrix, labels)
+    ko_cophenetic = calculate_cophenetic_corr_matrix(ko_linkage_matrix, labels)
+    ddp_rxns = _as_ddp_rxns(ddps)
+
+    rows = []
+    for ddp_id, rxns in ddp_rxns.items():
+        rxns = [rxn for rxn in rxns if rxn in label_set]
+        if len(rxns) < 2:
+            continue
+
+        pairs = list(itertools.combinations(rxns, 2))
+        wt_corr = _matrix_pair_values(wt_corr_df, pairs)
+        ko_corr = _matrix_pair_values(ko_corr_df, pairs)
+        wt_coph = _matrix_pair_values(wt_cophenetic, pairs)
+        ko_coph = _matrix_pair_values(ko_cophenetic, pairs)
+
+        wt_min_coph = _nan_min(wt_coph)
+        if min_wt_cophenetic_corr is not None and wt_min_coph <= min_wt_cophenetic_corr:
+            continue
+
+        wt_mean_corr = _nan_mean(wt_corr)
+        ko_mean_corr = _nan_mean(ko_corr)
+        wt_min_corr = _nan_min(wt_corr)
+        ko_min_corr = _nan_min(ko_corr)
+        wt_mean_coph = _nan_mean(wt_coph)
+        ko_mean_coph = _nan_mean(ko_coph)
+        ko_min_coph = _nan_min(ko_coph)
+
+        rows.append({
+            "ddp": ddp_id,
+            "n_reactions": len(rxns),
+            "n_pairs": len(pairs),
+            "wt_mean_corr": wt_mean_corr,
+            "ko_mean_corr": ko_mean_corr,
+            "mean_corr_drop": wt_mean_corr - ko_mean_corr,
+            "wt_min_corr": wt_min_corr,
+            "ko_min_corr": ko_min_corr,
+            "min_corr_drop": wt_min_corr - ko_min_corr,
+            "wt_mean_cophenetic_corr": wt_mean_coph,
+            "ko_mean_cophenetic_corr": ko_mean_coph,
+            "mean_cophenetic_drop": wt_mean_coph - ko_mean_coph,
+            "wt_min_cophenetic_corr": wt_min_coph,
+            "ko_min_cophenetic_corr": ko_min_coph,
+            "min_cophenetic_drop": wt_min_coph - ko_min_coph,
+            "reactions": rxns,
+        })
+
+    columns = [
+        "rank",
+        "ddp",
+        "n_reactions",
+        "n_pairs",
+        "wt_mean_corr",
+        "ko_mean_corr",
+        "mean_corr_drop",
+        "wt_min_corr",
+        "ko_min_corr",
+        "min_corr_drop",
+        "wt_mean_cophenetic_corr",
+        "ko_mean_cophenetic_corr",
+        "mean_cophenetic_drop",
+        "wt_min_cophenetic_corr",
+        "ko_min_cophenetic_corr",
+        "min_cophenetic_drop",
+        "reactions",
+    ]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+
+    result = pd.DataFrame(rows).sort_values(
+        ["mean_cophenetic_drop", "mean_corr_drop", "min_cophenetic_drop", "min_corr_drop"],
+        ascending=False,
+    )
+    result.insert(0, "rank", np.arange(1, len(result) + 1))
+    return result.loc[:, columns].reset_index(drop=True)
