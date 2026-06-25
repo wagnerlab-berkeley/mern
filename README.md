@@ -61,6 +61,10 @@ If installation fails while building `pygraphviz`, install Graphviz first
 (`brew install graphviz` on macOS, or `conda install -c conda-forge graphviz pygraphviz`
 inside a conda environment), then rerun the editable install.
 
+## Quick Start
+
+See the tutorial in the docs folder for a standard preprocessing, training, and analysis workflow. For larger datasets and cluster usage, the following cli can be used.
+
 ## Training representations from the command line
 
 Installing the package exposes a `mern` command. The main training entry point is:
