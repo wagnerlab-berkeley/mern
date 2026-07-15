@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional, Union, Mapping, Tuple
+from typing import List, Optional, Union, Mapping, Tuple
 import matplotlib.axes as ma
 import numpy as np
 import pandas as pd
@@ -584,6 +584,383 @@ def _svg_path_from_polygons(polygons: List[List[tuple]]) -> str:
     return " ".join(parts)
 
 
+def _polygon_centroid(points: np.ndarray) -> tuple[float, float]:
+    x = points[:, 0]
+    y = points[:, 1]
+    signed_area = 0.5 * (np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+    if abs(signed_area) < 1e-12:
+        return float(np.mean(x)), float(np.mean(y))
+    factor = x * np.roll(y, -1) - np.roll(x, -1) * y
+    centroid_x = np.sum((x + np.roll(x, -1)) * factor) / (6.0 * signed_area)
+    centroid_y = np.sum((y + np.roll(y, -1)) * factor) / (6.0 * signed_area)
+    return float(centroid_x), float(centroid_y)
+
+
+def _longest_edge_midpoint(edges: List[tuple]) -> tuple[float, float] | None:
+    if not edges:
+        return None
+    start, end = max(
+        edges,
+        key=lambda edge: float(np.linalg.norm(np.array(edge[1]) - np.array(edge[0]))),
+    )
+    midpoint = (np.array(start, dtype=float) + np.array(end, dtype=float)) / 2.0
+    return float(midpoint[0]), float(midpoint[1])
+
+
+def _distance_to_segment(point: np.ndarray, start: tuple, end: tuple) -> float:
+    p0 = np.array(start, dtype=float)
+    p1 = np.array(end, dtype=float)
+    segment = p1 - p0
+    length_sq = float(np.dot(segment, segment))
+    if length_sq == 0:
+        return float(np.linalg.norm(point - p0))
+    t = float(np.clip(np.dot(point - p0, segment) / length_sq, 0.0, 1.0))
+    projection = p0 + t * segment
+    return float(np.linalg.norm(point - projection))
+
+
+def _label_box_size(
+    text: str,
+    font_size: float = 14.0,
+    borderpad: float = 2.0,
+) -> tuple[float, float]:
+    return max(34.0, len(str(text)) * font_size * 0.62 + 2.0 * borderpad + 8.0), (
+        font_size + 2.0 * borderpad + 4.0
+    )
+
+
+def _rect_bounds(center: np.ndarray, size: tuple[float, float], pad: float = 0.0) -> tuple:
+    half_width = size[0] / 2.0 + pad
+    half_height = size[1] / 2.0 + pad
+    return (
+        center[0] - half_width,
+        center[0] + half_width,
+        center[1] - half_height,
+        center[1] + half_height,
+    )
+
+
+def _point_rect_distance(point: np.ndarray, bounds: tuple) -> float:
+    min_x, max_x, min_y, max_y = bounds
+    dx = max(min_x - point[0], 0.0, point[0] - max_x)
+    dy = max(min_y - point[1], 0.0, point[1] - max_y)
+    return float(np.hypot(dx, dy))
+
+
+def _rect_rect_distance(first: tuple, second: tuple) -> float:
+    first_min_x, first_max_x, first_min_y, first_max_y = first
+    second_min_x, second_max_x, second_min_y, second_max_y = second
+    dx = max(second_min_x - first_max_x, first_min_x - second_max_x, 0.0)
+    dy = max(second_min_y - first_max_y, first_min_y - second_max_y, 0.0)
+    return float(np.hypot(dx, dy))
+
+
+class _SpatialGeometryIndex:
+    def __init__(
+        self,
+        node_points: List[tuple],
+        edge_segments: List[tuple],
+        cell_size: float,
+    ):
+        self.node_points = list(node_points)
+        self.edge_segments = list(edge_segments)
+        self.cell_size = max(float(cell_size), 1.0)
+        self.node_cells = {}
+        self.edge_cells = {}
+
+        for index, point in enumerate(self.node_points):
+            point = np.array(point, dtype=float)
+            bounds = (point[0], point[0], point[1], point[1])
+            for cell in self._iter_cells(bounds):
+                self.node_cells.setdefault(cell, []).append(index)
+
+        for index, (start, end) in enumerate(self.edge_segments):
+            start = np.array(start, dtype=float)
+            end = np.array(end, dtype=float)
+            bounds = (
+                min(start[0], end[0]),
+                max(start[0], end[0]),
+                min(start[1], end[1]),
+                max(start[1], end[1]),
+            )
+            for cell in self._iter_cells(bounds):
+                self.edge_cells.setdefault(cell, []).append(index)
+
+    def _iter_cells(self, bounds: tuple):
+        min_x, max_x, min_y, max_y = bounds
+        min_cell_x = int(np.floor(min_x / self.cell_size))
+        max_cell_x = int(np.floor(max_x / self.cell_size))
+        min_cell_y = int(np.floor(min_y / self.cell_size))
+        max_cell_y = int(np.floor(max_y / self.cell_size))
+        for cell_x in range(min_cell_x, max_cell_x + 1):
+            for cell_y in range(min_cell_y, max_cell_y + 1):
+                yield cell_x, cell_y
+
+    def query(self, bounds: tuple, pad: float) -> tuple[List[tuple], List[tuple]]:
+        min_x, max_x, min_y, max_y = bounds
+        padded_bounds = (
+            min_x - pad,
+            max_x + pad,
+            min_y - pad,
+            max_y + pad,
+        )
+        node_indexes = set()
+        edge_indexes = set()
+        for cell in self._iter_cells(padded_bounds):
+            node_indexes.update(self.node_cells.get(cell, ()))
+            edge_indexes.update(self.edge_cells.get(cell, ()))
+        return (
+            [self.node_points[index] for index in node_indexes],
+            [self.edge_segments[index] for index in edge_indexes],
+        )
+
+
+def _candidate_geometry_distances(
+    bounds: tuple,
+    node_points: List[tuple],
+    edge_segments: List[tuple],
+    blocked_label_bounds: List[tuple],
+    min_node_distance: float,
+    min_edge_distance: float,
+    spatial_index: _SpatialGeometryIndex | None = None,
+) -> tuple[float, float, float]:
+    if spatial_index is not None:
+        node_points, edge_segments = spatial_index.query(
+            bounds,
+            pad=max(min_node_distance, min_edge_distance),
+        )
+    node_distance = min(
+        (
+            _point_rect_distance(np.array(point, dtype=float), bounds)
+            for point in node_points
+        ),
+        default=float("inf"),
+    )
+    edge_distance = min(
+        (_segment_rect_distance(start, end, bounds) for start, end in edge_segments),
+        default=float("inf"),
+    )
+    label_distance = min(
+        (
+            _rect_rect_distance(bounds, blocked_bounds)
+            for blocked_bounds in blocked_label_bounds
+        ),
+        default=float("inf"),
+    )
+    return node_distance, edge_distance, label_distance
+
+
+def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+
+
+def _point_on_segment(point: np.ndarray, start: np.ndarray, end: np.ndarray) -> bool:
+    return (
+        min(start[0], end[0]) <= point[0] <= max(start[0], end[0])
+        and min(start[1], end[1]) <= point[1] <= max(start[1], end[1])
+        and abs(_orientation(start, end, point)) < 1e-9
+    )
+
+
+def _segments_intersect(a0: np.ndarray, a1: np.ndarray, b0: np.ndarray, b1: np.ndarray) -> bool:
+    o1 = _orientation(a0, a1, b0)
+    o2 = _orientation(a0, a1, b1)
+    o3 = _orientation(b0, b1, a0)
+    o4 = _orientation(b0, b1, a1)
+    if o1 * o2 < 0 and o3 * o4 < 0:
+        return True
+    return (
+        (abs(o1) < 1e-9 and _point_on_segment(b0, a0, a1))
+        or (abs(o2) < 1e-9 and _point_on_segment(b1, a0, a1))
+        or (abs(o3) < 1e-9 and _point_on_segment(a0, b0, b1))
+        or (abs(o4) < 1e-9 and _point_on_segment(a1, b0, b1))
+    )
+
+
+def _segment_rect_distance(start: tuple, end: tuple, bounds: tuple) -> float:
+    min_x, max_x, min_y, max_y = bounds
+    p0 = np.array(start, dtype=float)
+    p1 = np.array(end, dtype=float)
+    if min_x <= p0[0] <= max_x and min_y <= p0[1] <= max_y:
+        return 0.0
+    if min_x <= p1[0] <= max_x and min_y <= p1[1] <= max_y:
+        return 0.0
+    corners = [
+        np.array((min_x, min_y), dtype=float),
+        np.array((max_x, min_y), dtype=float),
+        np.array((max_x, max_y), dtype=float),
+        np.array((min_x, max_y), dtype=float),
+    ]
+    sides = list(zip(corners, corners[1:] + corners[:1]))
+    if any(_segments_intersect(p0, p1, side_start, side_end) for side_start, side_end in sides):
+        return 0.0
+    return min(
+        [
+            _point_rect_distance(p0, bounds),
+            _point_rect_distance(p1, bounds),
+            *[_distance_to_segment(corner, start, end) for corner in corners],
+        ]
+    )
+
+
+def _nearest_clear_label_position(
+    preferred: tuple,
+    text: str,
+    node_points: List[tuple],
+    edge_segments: List[tuple],
+    min_node_distance: float,
+    min_edge_distance: float,
+    max_offset: float,
+    blocked_label_bounds: List[tuple] | None = None,
+    min_label_distance: float = 2.0,
+    spatial_index: _SpatialGeometryIndex | None = None,
+) -> tuple[float, float]:
+    preferred_point = np.array(preferred, dtype=float)
+    label_size = _label_box_size(text)
+    blocked_label_bounds = blocked_label_bounds or []
+
+    base_offset = max(
+        label_size[1] / 2.0 + min_edge_distance,
+        min_node_distance + 2.0,
+    )
+    radii = [0.0, base_offset]
+    if max_offset > base_offset:
+        radii.append(min(max_offset, base_offset * 1.6))
+    angles = [
+        np.pi / 2,
+        -np.pi / 2,
+        0.0,
+        np.pi,
+        np.pi / 4,
+        3 * np.pi / 4,
+        -np.pi / 4,
+        -3 * np.pi / 4,
+    ]
+    candidates = [preferred_point]
+    for radius in radii[1:]:
+        for angle in angles:
+            candidates.append(preferred_point + radius * np.array([np.cos(angle), np.sin(angle)]))
+
+    fallback = None
+    for candidate in candidates:
+        bounds = _rect_bounds(candidate, label_size)
+        node_distance, edge_distance, label_distance = _candidate_geometry_distances(
+            bounds,
+            node_points,
+            edge_segments,
+            blocked_label_bounds,
+            min_node_distance,
+            min_edge_distance,
+            spatial_index=spatial_index,
+        )
+        center_distance = float(np.linalg.norm(candidate - preferred_point))
+        is_clear = (
+            node_distance >= min_node_distance
+            and edge_distance >= min_edge_distance
+            and label_distance >= min_label_distance
+        )
+        if is_clear:
+            return float(candidate[0]), float(candidate[1])
+
+        clearance = min(
+            node_distance / min_node_distance,
+            edge_distance / min_edge_distance,
+            label_distance / min_label_distance,
+        )
+        fallback_item = (clearance, -center_distance, candidate)
+        fallback = (
+            max(fallback, fallback_item, key=lambda item: item[:2])
+            if fallback
+            else fallback_item
+        )
+
+    if fallback:
+        candidate = fallback[2]
+        return float(candidate[0]), float(candidate[1])
+    return float(preferred_point[0]), float(preferred_point[1])
+
+
+def _nearest_clear_contour_label_position(
+    hull: np.ndarray,
+    text: str,
+    node_points: List[tuple],
+    edge_segments: List[tuple],
+    min_node_distance: float,
+    min_edge_distance: float,
+    contour_pad: float,
+    blocked_label_bounds: List[tuple] | None = None,
+    min_label_distance: float = 2.0,
+    spatial_index: _SpatialGeometryIndex | None = None,
+) -> tuple[float, float]:
+    centroid = np.array(_polygon_centroid(hull), dtype=float)
+    label_size = _label_box_size(text)
+    blocked_label_bounds = blocked_label_bounds or []
+    min_x, max_x = float(np.min(hull[:, 0])), float(np.max(hull[:, 0]))
+    min_y, max_y = float(np.min(hull[:, 1])), float(np.max(hull[:, 1]))
+    x_mid = (min_x + max_x) / 2.0
+    y_mid = (min_y + max_y) / 2.0
+    local_offset = max(
+        label_size[1] / 2.0 + min_edge_distance,
+        contour_pad * 0.35,
+        10.0,
+    )
+    outside_offset = max(contour_pad * 0.4, 6.0)
+    angles = [
+        np.pi / 2,
+        -np.pi / 2,
+        0.0,
+        np.pi,
+        np.pi / 4,
+        3 * np.pi / 4,
+        -np.pi / 4,
+        -3 * np.pi / 4,
+    ]
+    candidates = [centroid]
+    for radius in (local_offset, local_offset * 1.6, local_offset * 2.2):
+        for angle in angles:
+            candidates.append(centroid + radius * np.array([np.cos(angle), np.sin(angle)]))
+    candidates.extend(
+        [
+            np.array((x_mid, min_y - label_size[1] / 2.0 - outside_offset)),
+            np.array((x_mid, max_y + label_size[1] / 2.0 + outside_offset)),
+            np.array((min_x - label_size[0] / 2.0 - outside_offset, y_mid)),
+            np.array((max_x + label_size[0] / 2.0 + outside_offset, y_mid)),
+        ]
+    )
+
+    fallback = None
+    for candidate in candidates:
+        bounds = _rect_bounds(candidate, label_size)
+        node_distance, edge_distance, label_distance = _candidate_geometry_distances(
+            bounds,
+            node_points,
+            edge_segments,
+            blocked_label_bounds,
+            min_node_distance,
+            min_edge_distance,
+            spatial_index=spatial_index,
+        )
+        center_distance = float(np.linalg.norm(candidate - centroid))
+        if (
+            node_distance >= min_node_distance
+            and edge_distance >= min_edge_distance
+            and label_distance >= min_label_distance
+        ):
+            return float(candidate[0]), float(candidate[1])
+        clearance = min(
+            node_distance / min_node_distance,
+            edge_distance / min_edge_distance,
+            label_distance / min_label_distance,
+        )
+        fallback_item = (clearance, -center_distance, candidate)
+        fallback = max(fallback, fallback_item, key=lambda item: item[:2]) if fallback else fallback_item
+
+    if fallback:
+        candidate = fallback[2]
+        return float(candidate[0]), float(candidate[1])
+    return float(centroid[0]), float(centroid[1])
+
+
 def _ddp_overlays(
         compound_graph: nx.Graph,
         pos: Mapping,
@@ -619,9 +996,19 @@ def _ddp_overlays(
 
     palette = px.colors.qualitative.Dark24
     ddp_color_map = dict(ddp_color_map or {})
+    all_node_points = list(pos.values())
+    all_edge_segments = [(pos[u], pos[v]) for u, v in compound_graph.edges()]
+    min_node_distance = max(4.0, ddp_contour_pad * 0.25)
+    min_edge_distance = max(4.0, ddp_contour_pad * 0.25)
+    spatial_index = _SpatialGeometryIndex(
+        all_node_points,
+        all_edge_segments,
+        cell_size=max(32.0, ddp_contour_pad * 3.0),
+    )
     traces = []
     annotations = []
     shapes = []
+    placed_label_bounds = []
     angles = np.linspace(0, 2 * np.pi, 14, endpoint=False)
     for i, (ddp, points) in enumerate(ddp_to_points.items()):
         color = ddp_color_map.get(ddp, palette[i % len(palette)])
@@ -659,8 +1046,17 @@ def _ddp_overlays(
                     0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
                 )
             traces.append(trace)
-            label_x = float(np.max(hull[:, 0]) + ddp_contour_pad)
-            label_y = float(np.mean(hull[:, 1]))
+            label_x, label_y = _nearest_clear_contour_label_position(
+                hull,
+                ddp,
+                node_points=all_node_points,
+                edge_segments=all_edge_segments,
+                min_node_distance=min_node_distance,
+                min_edge_distance=min_edge_distance,
+                contour_pad=ddp_contour_pad,
+                blocked_label_bounds=placed_label_bounds,
+                spatial_index=spatial_index,
+            )
         else:
             radius = ddp_contour_pad * 0.55
             polygons = [
@@ -682,17 +1078,32 @@ def _ddp_overlays(
                 )
             )
             pts = np.array(points, dtype=float)
-            label_x = float(np.max(pts[:, 0]) + ddp_contour_pad)
-            label_y = float(np.mean(pts[:, 1]))
+            label_position = _longest_edge_midpoint(ddp_to_edges.get(ddp, []))
+            if label_position is None:
+                label_position = (float(np.mean(pts[:, 0])), float(np.mean(pts[:, 1])))
+            label_x, label_y = _nearest_clear_label_position(
+                label_position,
+                ddp,
+                all_node_points,
+                all_edge_segments,
+                min_node_distance=max(4.0, radius * 0.35),
+                min_edge_distance=max(4.0, radius * 0.35),
+                max_offset=radius * 2.0,
+                blocked_label_bounds=placed_label_bounds,
+                spatial_index=spatial_index,
+            )
 
         if show_ddp_labels:
+            placed_label_bounds.append(
+                _rect_bounds(np.array((label_x, label_y), dtype=float), _label_box_size(ddp))
+            )
             annotations.append(
                 dict(
                     x=label_x,
                     y=label_y,
                     text=ddp,
                     showarrow=False,
-                    xanchor="left",
+                    xanchor="center",
                     yanchor="middle",
                     font=dict(color=color, size=14),
                     bgcolor="rgba(255,255,255,0.88)",
