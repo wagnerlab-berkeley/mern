@@ -1141,6 +1141,17 @@ def kegg_pathway_plot(
         ddp_contour_pad: float = 24.0,
         show_ddp_labels: bool = True,
         ddp_style: str = "soft_contours",
+        unassigned_edge_width: float = None,
+        unassigned_edge_color: str = None,
+        node_size: float = 12.0,
+        node_outline_color: str = None,
+        node_outline_width: float = 0.0,
+        node_label_font_family: str = None,
+        node_label_font_size: float = None,
+        node_label_color: str = None,
+        show_legend: bool = True,
+        show_colorbars: bool = True,
+        layout: Mapping = None,
 ):
     """
     Create a pathway visualization for a specific KEGG pathway.
@@ -1191,6 +1202,28 @@ def kegg_pathway_plot(
         Whether to annotate each DDP overlay with its label.
     ddp_style : str, optional
         DDP overlay style when ddp_labels is provided. One of "soft_contours", "contours", or "halos".
+    unassigned_edge_width : float, optional
+        Fixed width for edges without a label. If omitted, edge_width or the scaled edge size is used.
+    unassigned_edge_color : str, optional
+        Color for edges without a label. If omitted, preserves the existing dark gray default.
+    node_size : float, optional
+        Fixed node size used when node_sizes is not provided (default: 12).
+    node_outline_color : str, optional
+        Node outline color. No outline is drawn by default.
+    node_outline_width : float, optional
+        Node outline width (default: 0).
+    node_label_font_family : str, optional
+        Font family for metabolite labels.
+    node_label_font_size : float, optional
+        Font size for metabolite labels.
+    node_label_color : str, optional
+        Color for metabolite labels.
+    show_legend : bool, optional
+        Whether to add the categorical edge legend (default: True).
+    show_colorbars : bool, optional
+        Whether to add continuous edge and node color bars (default: True).
+    layout : Mapping, optional
+        Additional Plotly layout values applied after the function defaults.
     Returns
     -------
     go.Figure
@@ -1340,7 +1373,7 @@ def kegg_pathway_plot(
         is_na = pd.isna(val)
         if discrete_labels:
             if is_na:
-                color = dark_grey
+                color = unassigned_edge_color or dark_grey
                 disp_val = "NA"
                 label_txt = "NA"
             else:
@@ -1349,7 +1382,7 @@ def kegg_pathway_plot(
                 label_txt = str(val)
         else:
             if is_na:
-                color = dark_grey
+                color = unassigned_edge_color or dark_grey
                 disp_val = "NA"
                 label_txt = "NA"
             else:
@@ -1359,6 +1392,8 @@ def kegg_pathway_plot(
                 label_txt = f"{val:.2f}"
 
         plot_edge_width = edge_width if edge_width is not None else data['size']
+        if is_na and unassigned_edge_width is not None:
+            plot_edge_width = unassigned_edge_width
         edge_traces.append(go.Scatter(
             x=[pos[u][0], pos[v][0], None],
             y=[pos[u][1], pos[v][1], None],
@@ -1445,11 +1480,11 @@ def kegg_pathway_plot(
                     else:
                         node_size_values.append(12)
             else:
-                node_size_values = [12] * len(compound_graph.nodes())
+                node_size_values = [node_size] * len(compound_graph.nodes())
         else:
-            node_size_values = [12] * len(compound_graph.nodes())
+            node_size_values = [node_size] * len(compound_graph.nodes())
     else:
-        node_size_values = [12] * len(compound_graph.nodes())
+        node_size_values = [node_size] * len(compound_graph.nodes())
 
     nodes = list(compound_graph.nodes())
     node_x = [pos[n][0] for n in nodes]
@@ -1486,20 +1521,37 @@ def kegg_pathway_plot(
         node_text = None
         node_mode = 'markers'
 
+    node_marker = dict(size=node_size_values, color=node_colors, opacity=1.0)
+    if node_outline_color is not None or node_outline_width:
+        node_marker["line"] = dict(
+            color=node_outline_color,
+            width=node_outline_width,
+        )
+    node_textfont = {
+        key: value
+        for key, value in {
+            "family": node_label_font_family,
+            "size": node_label_font_size,
+            "color": node_label_color,
+        }.items()
+        if value is not None
+    }
+
     node_trace = go.Scatter(
         x=node_x, y=node_y,
         mode=node_mode,
         text=node_text,
         hovertext=hover_texts,
-        marker=dict(size=node_size_values, color=node_colors, opacity=1.0),
+        marker=node_marker,
         hoverinfo='text',
         textposition='top center',
         hoverlabel=dict(bgcolor='white'),
-        hovertemplate='%{hovertext}<extra></extra>'
+        hovertemplate='%{hovertext}<extra></extra>',
+        textfont=node_textfont or None,
     )
 
     colorbar_traces = []
-    if discrete_labels:
+    if discrete_labels and show_legend:
         legend_cat_traces = []
         for label in edge_label_categories:
             legend_cat_traces.append(go.Scatter(
@@ -1511,7 +1563,7 @@ def kegg_pathway_plot(
                 showlegend=True
             ))
         colorbar_traces = legend_cat_traces
-    else:
+    elif not discrete_labels and show_colorbars:
         edge_colorbar = go.Scatter(
             x=[None],
             y=[None],
@@ -1536,7 +1588,7 @@ def kegg_pathway_plot(
         )
         colorbar_traces.append(edge_colorbar)
 
-    if node_labels is not None and node_min is not None and node_max is not None:
+    if show_colorbars and node_labels is not None and node_min is not None and node_max is not None:
         node_colorbar = go.Scatter(
             x=[None],
             y=[None],
@@ -1574,6 +1626,8 @@ def kegg_pathway_plot(
         fig.update_layout(annotations=ddp_annotations)
     if ddp_shapes:
         fig.update_layout(shapes=ddp_shapes)
+    if layout is not None:
+        fig.update_layout(**dict(layout))
     return fig
 
 def plot_differential_scores(data, title, c='black'):
@@ -1624,6 +1678,17 @@ def custom_pathway_plot(
         ddp_contour_pad: float = 24.0,
         show_ddp_labels: bool = True,
         ddp_style: str = "soft_contours",
+        unassigned_edge_width: float = None,
+        unassigned_edge_color: str = None,
+        node_size: float = 12.0,
+        node_outline_color: str = None,
+        node_outline_width: float = 0.0,
+        node_label_font_family: str = None,
+        node_label_font_size: float = None,
+        node_label_color: str = None,
+        show_legend: bool = True,
+        show_colorbars: bool = True,
+        layout: Mapping = None,
 ):
     """
     Create a pathway visualization using graphviz layout for a custom list of reactions.
@@ -1673,6 +1738,28 @@ def custom_pathway_plot(
         Whether to annotate each DDP overlay with its label.
     ddp_style : str, optional
         DDP overlay style when ddp_labels is provided. One of "soft_contours", "contours", or "halos".
+    unassigned_edge_width : float, optional
+        Fixed width for edges without a label. If omitted, edge_width or the scaled edge size is used.
+    unassigned_edge_color : str, optional
+        Color for edges without a label. If omitted, preserves the existing gray defaults.
+    node_size : float, optional
+        Fixed node size used when node_sizes is not provided (default: 12).
+    node_outline_color : str, optional
+        Node outline color. No outline is drawn by default.
+    node_outline_width : float, optional
+        Node outline width (default: 0).
+    node_label_font_family : str, optional
+        Font family for metabolite labels.
+    node_label_font_size : float, optional
+        Font size for metabolite labels.
+    node_label_color : str, optional
+        Color for metabolite labels.
+    show_legend : bool, optional
+        Whether to add the categorical edge legend (default: True).
+    show_colorbars : bool, optional
+        Whether to add continuous edge and node color bars (default: True).
+    layout : Mapping, optional
+        Additional Plotly layout values applied after the function defaults.
 
     Returns
     -------
@@ -1795,14 +1882,14 @@ def custom_pathway_plot(
         is_na = pd.isna(val)
         if discrete_labels:
             if is_na:
-                color = dark_grey
+                color = unassigned_edge_color or dark_grey
                 label_txt = "NA"
             else:
                 color = discrete_color_map.get(val, dark_grey)
                 label_txt = str(val)
         else:
             if is_na:
-                color = 'gray'
+                color = unassigned_edge_color or 'gray'
                 label_txt = "NA"
             else:
                 norm_value = (val - min_val) / (max_val - min_val) if max_val != min_val else 0.5
@@ -1810,6 +1897,8 @@ def custom_pathway_plot(
                 label_txt = f"{val:.2f}"
 
         plot_edge_width = edge_width if edge_width is not None else data['size']
+        if is_na and unassigned_edge_width is not None:
+            plot_edge_width = unassigned_edge_width
         edge_traces.append(go.Scatter(
             x=[pos[u][0], pos[v][0], None],
             y=[pos[u][1], pos[v][1], None],
@@ -1896,11 +1985,11 @@ def custom_pathway_plot(
                     else:
                         node_size_values.append(12)  # Default size for missing values
             else:
-                node_size_values = [12] * len(compound_graph.nodes())
+                node_size_values = [node_size] * len(compound_graph.nodes())
         else:
-            node_size_values = [12] * len(compound_graph.nodes())
+            node_size_values = [node_size] * len(compound_graph.nodes())
     else:
-        node_size_values = [12] * len(compound_graph.nodes())
+        node_size_values = [node_size] * len(compound_graph.nodes())
 
     nodes = list(compound_graph.nodes())
     node_x = [pos[n][0] for n in nodes]
@@ -1934,20 +2023,37 @@ def custom_pathway_plot(
         node_text = None
         node_mode = 'markers'
 
+    node_marker = dict(size=node_size_values, color=node_colors, opacity=1.0)
+    if node_outline_color is not None or node_outline_width:
+        node_marker["line"] = dict(
+            color=node_outline_color,
+            width=node_outline_width,
+        )
+    node_textfont = {
+        key: value
+        for key, value in {
+            "family": node_label_font_family,
+            "size": node_label_font_size,
+            "color": node_label_color,
+        }.items()
+        if value is not None
+    }
+
     node_trace = go.Scatter(
         x=node_x, y=node_y,
         mode=node_mode,
         text=node_text,
         hovertext=hover_texts,
-        marker=dict(size=node_size_values, color=node_colors, opacity=1.0),
+        marker=node_marker,
         hoverinfo='text',
         textposition='top center',
         hoverlabel=dict(bgcolor='white'),
-        hovertemplate='%{hovertext}<extra></extra>'
+        hovertemplate='%{hovertext}<extra></extra>',
+        textfont=node_textfont or None,
     )
 
     colorbar_traces = []
-    if discrete_labels:
+    if discrete_labels and show_legend:
         legend_cat_traces = []
         for label in edge_label_categories:
             legend_cat_traces.append(go.Scatter(
@@ -1959,7 +2065,7 @@ def custom_pathway_plot(
                 showlegend=True
             ))
         colorbar_traces = legend_cat_traces
-    else:
+    elif not discrete_labels and show_colorbars:
         edge_colorbar = go.Scatter(
             x=[None],
             y=[None],
@@ -1984,7 +2090,7 @@ def custom_pathway_plot(
         )
         colorbar_traces.append(edge_colorbar)
 
-    if node_labels is not None and node_min is not None and node_max is not None:
+    if show_colorbars and node_labels is not None and node_min is not None and node_max is not None:
         node_colorbar = go.Scatter(
             x=[None],
             y=[None],
@@ -2022,6 +2128,8 @@ def custom_pathway_plot(
         fig.update_layout(annotations=ddp_annotations)
     if ddp_shapes:
         fig.update_layout(shapes=ddp_shapes)
+    if layout is not None:
+        fig.update_layout(**dict(layout))
 
     return fig
 

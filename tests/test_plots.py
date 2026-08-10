@@ -1,14 +1,97 @@
 import networkx as nx
+import numpy as np
 import pandas as pd
 import pytest
 
+import mern.support._plots as plots
 from mern.support._plots import (
     _SpatialGeometryIndex,
     _ddp_overlays,
     _label_box_size,
     _rect_bounds,
     _segment_rect_distance,
+    custom_pathway_plot,
 )
+
+
+class _Compound:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Reaction:
+    def __init__(self, name, substrate, product):
+        self.name = name
+        self.substrates = [_Compound(substrate)]
+        self.products = [_Compound(product)]
+
+
+class _PathwayDataset:
+    def __init__(self):
+        self.rxns = [
+            _Reaction("rn:R1", "cpd:C00001", "cpd:C00002"),
+            _Reaction("rn:R2", "cpd:C00002", "cpd:C00003"),
+        ]
+        self.compound_info = {
+            "C00001": {"name": "Water"},
+            "C00002": {"name": "ATP"},
+            "C00003": {"name": "ADP"},
+        }
+
+
+def test_custom_pathway_plot_accepts_publication_style_parameters(monkeypatch):
+    monkeypatch.setattr(
+        plots,
+        "graphviz_layout",
+        lambda graph: {
+            "cpd:C00001": (0.0, 0.0),
+            "cpd:C00002": (1.0, 0.0),
+            "cpd:C00003": (2.0, 0.0),
+        },
+    )
+    figure = custom_pathway_plot(
+        ["rn:R1", "rn:R2"],
+        _PathwayDataset(),
+        rna=None,
+        user_labels=pd.Series({"rn:R1": "DDP 1", "rn:R2": np.nan}),
+        edge_width=2.5,
+        unassigned_edge_width=1.0,
+        unassigned_edge_color="#AAAAAA",
+        node_size=4.2,
+        node_outline_color="#666666",
+        node_outline_width=0.4,
+        node_label_font_family="Arial",
+        node_label_font_size=9,
+        node_label_color="#222222",
+        show_legend=False,
+        show_colorbars=False,
+        layout={
+            "title": None,
+            "plot_bgcolor": "rgba(0,0,0,0)",
+            "paper_bgcolor": "rgba(0,0,0,0)",
+        },
+    )
+
+    edge_traces = [trace for trace in figure.data if trace.mode == "lines"]
+    assert len(edge_traces) == 2
+    assert edge_traces[0].line.width == pytest.approx(2.5)
+    assert edge_traces[1].line.width == pytest.approx(1.0)
+    assert edge_traces[1].line.color == "#AAAAAA"
+
+    node_trace = next(trace for trace in figure.data if trace.mode == "markers+text")
+    assert list(node_trace.marker.size) == pytest.approx([4.2, 4.2, 4.2])
+    assert node_trace.marker.line.color == "#666666"
+    assert node_trace.marker.line.width == pytest.approx(0.4)
+    assert node_trace.textfont.family == "Arial"
+    assert node_trace.textfont.size == pytest.approx(9)
+    assert node_trace.textfont.color == "#222222"
+    assert list(node_trace.text) == ["Water", "ATP", "ADP"]
+
+    assert not any(trace.showlegend for trace in figure.data)
+    assert not any(getattr(trace.marker, "showscale", False) for trace in figure.data)
+    assert figure.layout.title.text is None
+    assert figure.layout.plot_bgcolor == "rgba(0,0,0,0)"
+    assert figure.layout.paper_bgcolor == "rgba(0,0,0,0)"
 
 
 def test_ddp_contour_label_box_does_not_overlap_reaction_segment():

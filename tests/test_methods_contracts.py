@@ -608,8 +608,8 @@ def test_calculate_ddp_structural_breaks_scores_wt_ddp_pairs():
     ko_corr = pd.DataFrame(
         [
             [1.0, 0.5, 0.4],
-            [0.5, 1.0, 0.3],
-            [0.4, 0.3, 1.0],
+            [0.5, 1.0, 0.1],
+            [0.4, 0.1, 1.0],
         ],
         index=labels,
         columns=labels,
@@ -639,17 +639,19 @@ def test_calculate_ddp_structural_breaks_scores_wt_ddp_pairs():
     assert row["n_reactions"] == 3
     assert row["n_pairs"] == 3
     assert np.isclose(row["wt_mean_corr"], 0.8)
-    assert np.isclose(row["ko_mean_corr"], 0.4)
-    assert np.isclose(row["mean_corr_drop"], 0.4)
+    assert np.isclose(row["ko_mean_corr"], 1 / 3)
+    assert np.isclose(row["mean_corr_drop"], 0.8 - 1 / 3)
     assert np.isclose(row["wt_min_corr"], 0.7)
-    assert np.isclose(row["ko_min_corr"], 0.3)
-    assert np.isclose(row["min_corr_drop"], 0.4)
+    assert np.isclose(row["ko_min_corr"], 0.1)
+    assert np.isclose(row["min_corr_drop"], 0.6)
+    assert row["largest_corr_drop_pair"] == ("r2", "r3")
     assert np.isclose(row["wt_mean_cophenetic_corr"], (0.9 + 0.7 + 0.7) / 3)
     assert np.isclose(row["ko_mean_cophenetic_corr"], (0.2 + 0.2 + 0.4) / 3)
     assert np.isclose(row["mean_cophenetic_drop"], 0.5)
     assert np.isclose(row["wt_min_cophenetic_corr"], 0.7)
     assert np.isclose(row["ko_min_cophenetic_corr"], 0.2)
     assert np.isclose(row["min_cophenetic_drop"], 0.5)
+    assert row["largest_cophenetic_drop_pair"] == ("r1", "r2")
 
 
 def test_calculate_ddp_structural_breaks_filters_weak_wt_ddps():
@@ -671,3 +673,5 @@ def test_calculate_ddp_structural_breaks_filters_weak_wt_ddps():
     )
 
     assert breaks.empty
+    assert "largest_corr_drop_pair" in breaks.columns
+    assert "largest_cophenetic_drop_pair" in breaks.columns

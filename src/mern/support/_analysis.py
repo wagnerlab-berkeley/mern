@@ -702,6 +702,19 @@ def _nan_min(values: np.ndarray) -> float:
     return float(np.min(values)) if len(values) else np.nan
 
 
+def _largest_drop_pair(
+    wt_values: np.ndarray,
+    ko_values: np.ndarray,
+    pairs: Sequence[tuple],
+) -> tuple | None:
+    drops = wt_values - ko_values
+    finite = np.isfinite(drops)
+    if not finite.any():
+        return None
+    finite_indices = np.flatnonzero(finite)
+    return pairs[finite_indices[np.argmax(drops[finite])]]
+
+
 def calculate_ddp_structural_breaks(
     ddps,
     wt_corr_df: pd.DataFrame,
@@ -728,6 +741,14 @@ def calculate_ddp_structural_breaks(
     min_wt_cophenetic_corr
         Optional robust-DDP filter. If provided, keeps only DDPs whose minimum
         WT within-DDP cophenetic correlation is greater than this value.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per scored DDP. ``largest_corr_drop_pair`` and
+        ``largest_cophenetic_drop_pair`` contain the reaction pair with the
+        largest finite WT-minus-KO decrease for the raw and cophenetic
+        correlations, respectively.
     """
     if labels is None:
         labels = list(wt_corr_df.index)
@@ -777,12 +798,14 @@ def calculate_ddp_structural_breaks(
             "wt_min_corr": wt_min_corr,
             "ko_min_corr": ko_min_corr,
             "min_corr_drop": wt_min_corr - ko_min_corr,
+            "largest_corr_drop_pair": _largest_drop_pair(wt_corr, ko_corr, pairs),
             "wt_mean_cophenetic_corr": wt_mean_coph,
             "ko_mean_cophenetic_corr": ko_mean_coph,
             "mean_cophenetic_drop": wt_mean_coph - ko_mean_coph,
             "wt_min_cophenetic_corr": wt_min_coph,
             "ko_min_cophenetic_corr": ko_min_coph,
             "min_cophenetic_drop": wt_min_coph - ko_min_coph,
+            "largest_cophenetic_drop_pair": _largest_drop_pair(wt_coph, ko_coph, pairs),
             "reactions": rxns,
         })
 
@@ -797,12 +820,14 @@ def calculate_ddp_structural_breaks(
         "wt_min_corr",
         "ko_min_corr",
         "min_corr_drop",
+        "largest_corr_drop_pair",
         "wt_mean_cophenetic_corr",
         "ko_mean_cophenetic_corr",
         "mean_cophenetic_drop",
         "wt_min_cophenetic_corr",
         "ko_min_cophenetic_corr",
         "min_cophenetic_drop",
+        "largest_cophenetic_drop_pair",
         "reactions",
     ]
     if not rows:
