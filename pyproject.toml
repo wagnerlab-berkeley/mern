@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mern"
-version = "1.0.0"
+version = "1.0.1"
 description = "Graph-guided metabolic representation learning for single-cell transcriptomic data."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
 authors = [
-    {name = "MERN developers"},
+    {name = "Daniel Lewinsohn"},
+    {name = "Adelina Chau"},
 ]
 keywords = ["single-cell", "metabolism", "scvi-tools", "anndata", "torch"]
 classifiers = [

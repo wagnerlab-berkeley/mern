@@ -1,9 +1,9 @@
 # Configuration file for the Sphinx documentation builder.
 
 project = "MeRN"
-copyright = "2026, Adelina Chau"
-author = "Adelina Chau"
-release = "1.0.0"
+copyright = "2026, Adelina Chau and Daniel Lewinsohn"
+author = "Adelina Chau and Daniel Lewinsohn"
+release = "1.0.1"
 
 extensions = [
     "myst_nb",

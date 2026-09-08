@@ -18,7 +18,7 @@ MeRN introduces a metabolic prior by leveraging a metabolic reaction graph, wher
 A graph VAE learns embeddings of this reaction network, and the cell-level latent space is decomposed into two components:
 
 - Metabolic variation: variation explained by metabolic reactions
-- Background variation: non-metabolic transcriptional variation
+- Non-metabolic variation: transcriptomic variation explained by genes not encoding enzymes
 
 This structure links latent dimensions to reaction activity and enzyme-coding genes, enabling interpretable metabolic representations.
 
@@ -318,7 +318,7 @@ wrapper unless you want to make the script fully explicit.
 ## Key capabilities
 
 - Learn graph-guided latent representations of cell state from single-cell RNA-seq data.
-- Separate metabolic variation from background, non-metabolic transcriptional variation.
+- Separate metabolic variation from non-metabolic transcriptional variation.
 - Use reaction graphs and reaction-to-gene mappings to tie latent structure to metabolic biology.
 - Work with KEGG-derived metabolic datasets and packaged metabolic network resources.
 - Run downstream analysis and visualization utilities for pathway activity, latent factors, and topology-aware plots.
@@ -344,6 +344,17 @@ Contributions are welcome. The next practical steps for this repository are:
 - resolving remaining import and dependency issues
 - running and expanding tests
 - improving the user-facing API and documentation
+
+## Acknowledgements
+
+Early development of MERN drew on the software architecture of
+[scGLUE](https://github.com/gao-lab/GLUE). The current MERN implementation
+has been substantially rewritten and implements a distinct model and workflow.
+We gratefully acknowledge the scGLUE developers for their foundational work.
+
+Cao, Z.-J. and Gao, G. Multi-omics single-cell data integration and regulatory
+inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
+(2022). https://doi.org/10.1038/s41587-022-01284-4
 
 ## Citation
 
