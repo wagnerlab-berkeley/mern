@@ -83,6 +83,7 @@ embeddings, train/validation/test indices, clustering, and UMAP coordinates to:
 ```text
 <output_dir>/mern_rep_<rep>/embeddings.pkl
 ```
+This enables training of many replicates. Example bash scripts are included below.
 
 The defaults match the 25-dimensional KL-search runs used by
 `generate_mouse_intestine_kl_search.sh` and `generate_wt_main_kl_search.sh`:
@@ -155,9 +156,9 @@ mern train reps \
   --devices 1
 ```
 
-## Averaging enzyme activity across replicates
+## Averaging reaction activity across replicates
 
-After training several replicate models, average stochastic enzyme activity
+After training several replicate models, average stochastic reaction activity
 decodes with:
 
 ```bash
@@ -174,8 +175,7 @@ times with independent seeds, and writes:
 <dir>/average_enzyme_activity.csv.gz
 ```
 
-The command mirrors the old `average_enzyme_activity.py` script. It prepares the
-AnnData with the packaged KEGG support utilities, loads each replicate model on
+This command prepares the AnnData with the packaged KEGG support utilities, loads each replicate model on
 CPU by default, calls `mern.support.average_enzyme_activity`, and saves a
 compressed CSV. Override the output path or sampling settings with:
 
@@ -202,8 +202,7 @@ srun mern average-enzyme-activity \
 
 ## Evaluating replicate consistency metrics
 
-The old model evaluation scripts are available as package CLI commands. To
-evaluate replicate consistency within each condition directory:
+To evaluate replicate consistency within each condition directory:
 
 ```bash
 mern evaluate-models \
@@ -212,8 +211,8 @@ mern evaluate-models \
   --species mouse
 ```
 
-This mirrors `model_evaluation.py`: each condition under `--dir` is expected to
-contain replicate model directories, stochastic enzyme activity is averaged over
+Each condition under `--dir` is expected to
+contain replicate model directories. Stochastic reaction activity is averaged over
 8 decode samples by default, and results are written to:
 
 ```text
@@ -229,7 +228,7 @@ mern evaluate-cross-models \
   --adata_path /path/to/data.h5ad
 ```
 
-This mirrors `model_cross_evaluation.py` and writes `vs_<dir2>.pkl` under
+This writes `vs_<dir2>.pkl` under
 `--dir1`. Both commands keep the old defaults of `--neighbors 100`,
 `--graph_neighbors 25`, `--seed 8`, and CPU model loading.
 
