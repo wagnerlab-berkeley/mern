@@ -156,6 +156,13 @@ def add_reps_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Column name for batch information",
     )
     parser.add_argument(
+        "--counts_layer",
+        "--counts-layer",
+        type=str,
+        default="counts",
+        help="AnnData layer containing raw counts",
+    )
+    parser.add_argument(
         "--n_hidden", "--n-hidden", type=int, default=256, help="Number of hidden units"
     )
     parser.add_argument(
@@ -337,6 +344,7 @@ def _print_reps_args(args: argparse.Namespace) -> None:
         "background_to_metabolic_weight",
         "species",
         "batch_key",
+        "counts_layer",
         "n_hidden",
         "n_layers",
         "leiden_resolution",
@@ -508,7 +516,7 @@ def run_reps_command(args: argparse.Namespace) -> int:
             load_best_on_end=False,
             check_nan_gradients=False,
         )
-        mern.MERN.setup_anndata(rna, layer="counts", batch_key=args.batch_key)
+        mern.MERN.setup_anndata(rna, layer=args.counts_layer, batch_key=args.batch_key)
         model = mern.MERN(
             rna,
             met_g,

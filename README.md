@@ -76,6 +76,10 @@ mern train reps \
   --adata_file mouse_intestine_pp.h5ad.gz
 ```
 
+By default, training reads raw counts from `adata.layers["counts"]`. Use
+`--counts_layer <layer_name>` (or `--counts-layer`) when the counts are stored
+under a different layer name.
+
 This command trains one MERN replicate, saves the model under
 `<output_dir>/mern_rep_<rep>/`, and writes latent representations, graph
 embeddings, train/validation/test indices, clustering, and UMAP coordinates to:
