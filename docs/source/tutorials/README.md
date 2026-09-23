@@ -17,7 +17,7 @@ jupyter lab MeRN_tutorial.ipynb
 Create the environment from this directory: `environment.yml` installs the `mern` package from the
 surrounding clone by relative path.
 
-Everything the notebook reads is in this directory. There is no download step and no path to edit.
+Everything the notebook reads is in this directory.
 
 ### Installing without conda
 
@@ -34,8 +34,7 @@ pip install -e ../../.. kaleido jupyterlab ipywidgets
 | `data/folr1_anndata_subsample.h5ad.gz` | *Folr1* knockout cells, same feature space |
 | `data/folr1_average_enzyme_activity.csv.gz` | knockout reaction activity, its own replicate ensemble |
 | `model/average_enzyme_activity.csv.gz` | wild-type reaction activity, replicate ensemble |
-| `model/mern_rep_*/model.pt.gz` | pretrained replicate checkpoints, gzipped |
-| `model/mern_rep_*/metabolic_clustering_0.4.csv` | the published wild-type metabolic clustering |
+| `model/mern_rep_0/model.pt.gz` … `mern_rep_4/` | five pretrained replicate checkpoints, gzipped |
 | `model/mern_rep_0/reference_mapped/` | both genotypes mapped onto the wild-type reference clustering, and the shared metabolic UMAP |
 
 ## About the subsampled data
