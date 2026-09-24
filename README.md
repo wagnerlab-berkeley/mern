@@ -362,4 +362,4 @@ inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
 
 ## Citation
 
-Citation information will be added here later.
+Lewinsohn DP, Dias N, Chau A, Koike Y, Smith ZD, Ioannidis NM, Wagner A. Extracting interpretable single-cell metabolic states with graph-guided representation learning. bioRxiv. 2026. doi:[10.64898/2026.09.17.751504](https://doi.org/10.64898/2026.09.17.751504)
