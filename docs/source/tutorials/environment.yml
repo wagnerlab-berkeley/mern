@@ -1,0 +1,15 @@
+# Environment for the MeRN tutorial.
+
+name: mern-tutorial
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - graphviz
+  - pygraphviz
+  - jupyterlab
+  - ipywidgets
+  - pip
+  - pip:
+      - -e ../../..        # the mern package, from this clone
+      - kaleido

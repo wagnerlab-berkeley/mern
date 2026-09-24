@@ -75,6 +75,10 @@ include = [
     "/scripts",
     "/docs",
 ]
+exclude = [
+    "/docs/source/tutorials/data",
+    "/docs/source/tutorials/model",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

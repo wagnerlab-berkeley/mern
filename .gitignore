@@ -39,3 +39,6 @@ tests/repro_outputs/
 
 # Local data and logs
 *.log
+
+# Tutorial checkpoints unzipped
+docs/source/tutorials/model/mern_rep_*/model.pt
