@@ -33,9 +33,9 @@ pip install -e ../../.. kaleido jupyterlab ipywidgets
 | `data/main_wt_anndata_pp_subsample.h5ad.gz` | wild-type cells, model feature space, log1p `X` plus raw `counts_RNA` |
 | `data/folr1_anndata_subsample.h5ad.gz` | *Folr1* knockout cells, same feature space |
 | `data/folr1_average_enzyme_activity.csv.gz` | knockout reaction activity, its own replicate ensemble |
-| `model/average_enzyme_activity.csv.gz` | wild-type reaction activity, replicate ensemble |
+| `data/wt_ref_color_mapping.csv` | cell-type colors used in the paper's figures |
 | `model/mern_rep_0/model.pt.gz` … `mern_rep_4/` | five pretrained replicate checkpoints, gzipped |
-| `model/mern_rep_0/reference_mapped/` | both genotypes mapped onto the wild-type reference clustering, and the shared metabolic UMAP |
+| `model/mern_rep_0/metabolic_clustering_0.4.csv` | the paper's metabolic clusters, for comparison with the ones recomputed here |
 
 ## About the subsampled data
 
@@ -46,4 +46,5 @@ drawn proportionally across (metabolic state x germ layer).
 Only cells were sampled. The gene space, the `highly_variable_metabolic` /
 `highly_variable_background` flags, the reaction graph, and the models are exactly those of the
 published run, so the pretrained checkpoints load and decode as they do on the full data. The
-reaction activity tables are the published 8-decode, 10-replicate ensembles, subset to these cells.
+wild-type reaction activity is decoded in the notebook from the 5 included replicates. The *Folr1*
+reaction activity table is the published 8-decode, 10-replicate ensemble, subset to these cells.
