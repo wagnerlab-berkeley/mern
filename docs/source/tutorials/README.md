@@ -19,6 +19,10 @@ surrounding clone by relative path.
 
 Everything the notebook reads is in this directory.
 
+The first run expands the five model checkpoints to about 524 MB. Kaleido 1.x also requires
+Chrome for the notebook's static image exports; if Chrome is not installed, run
+`plotly_get_chrome` after creating the environment.
+
 ### Installing without conda
 
 ```bash

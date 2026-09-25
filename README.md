@@ -26,7 +26,7 @@ This structure links latent dimensions to reaction activity and enzyme-coding ge
 
 Documentation sources live under `docs/source`. The main Sphinx entry point is
 `docs/source/index.rst`, and the tutorial notebook currently lives in
-`docs/source/tutorials/MeRN_tutorial_final.ipynb`. Built documentation is
+`docs/source/tutorials/MeRN_tutorial.ipynb`. Built documentation is
 written to `docs/build/html`.
 
 Install the package in editable mode:
@@ -331,10 +331,10 @@ wrapper unless you want to make the script fully explicit.
 
 The current repository contains:
 
-- `src/model/`: model code, including the main MeRN model, neural modules,
+- `src/mern/`: model code, including the main MeRN model, neural modules,
   base components, dataloaders, optimizer utilities, and configuration/constants
-- `src/support/`: analysis, plotting, dataset helpers, and other support code
-- `src/support/data/kegg/`: packaged KEGG-derived graph resources and related
+- `src/mern/support/`: analysis, plotting, dataset helpers, and other support code
+- `src/mern/support/data/kegg/`: packaged KEGG-derived graph resources and related
   data files
 - `docs/source/`: documentation sources for Sphinx
 - `docs/source/tutorials/`: tutorial notebooks included in the docs
@@ -342,14 +342,18 @@ The current repository contains:
 
 ## Contributing
 
-Contributions are welcome. The next practical steps for this repository are:
-
-- validating package installation
-- resolving remaining import and dependency issues
-- running and expanding tests
-- improving the user-facing API and documentation
+Contributions and bug reports are welcome through GitHub issues and pull requests.
 
 ## Acknowledgements
+
+MeRN is built on [scvi-tools](https://github.com/scverse/scvi-tools) and uses its
+model, training, and data-management infrastructure. Parts of MeRN's model and
+data-splitting implementation were adapted from scvi-tools; its BSD-3-Clause
+notice is included in `LICENSE`.
+
+Gayoso A, Lopez R, Xing G, et al. A Python library for probabilistic analysis of
+single-cell omics data. *Nature Biotechnology* 40, 163–166 (2022).
+https://doi.org/10.1038/s41587-021-01206-w
 
 Early development of MERN drew on the software architecture of
 [scGLUE](https://github.com/gao-lab/GLUE). The current MERN implementation
@@ -365,6 +369,9 @@ inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
 ### MeRN
 
 Lewinsohn DP, Dias N, Chau A, Koike Y, Smith ZD, Ioannidis NM, Wagner A. Extracting interpretable single-cell metabolic states with graph-guided representation learning. bioRxiv. 2026. doi:[10.64898/2026.09.17.751504](https://doi.org/10.64898/2026.09.17.751504)
+
+The `v1.0.0` and `v1.0.1` tags are the manuscript-referenced releases before and
+after the documented self-loop and reaction-gene mapping fixes.
 
 ### Application of MeRN to mouse embryogenesis and source of tutorial data
 
