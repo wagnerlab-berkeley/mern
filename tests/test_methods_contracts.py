@@ -1,5 +1,7 @@
 import ast
+import copy
 from pathlib import Path
+import pickle
 
 import anndata as ad
 import networkx as nx
@@ -43,6 +45,7 @@ class _Reaction:
 
 def _fake_kegg_dataset(keep_isolates=False):
     dataset = KeggKGMLMetabolicDataset.__new__(KeggKGMLMetabolicDataset)
+    dataset.add_oxphos = True
     dataset.keep_isolates = keep_isolates
     dataset.rxns = [
         _Reaction("rn:R1", substrates=["cpd:A"], products=["cpd:B"]),
@@ -57,6 +60,13 @@ def _fake_kegg_dataset(keep_isolates=False):
         "rn:R3": ["GeneC"],
         "rn:R4": ["GeneD"],
     }
+    dataset._bundled_graph = nx.DiGraph(
+        [
+            ("rn:R1", "rn:R2"),
+            ("rn:R2", "rn:R1"),
+        ]
+    )
+    dataset._bundled_graph.add_nodes_from(["rn:R3", "rn:R4"])
     return dataset
 
 
@@ -104,14 +114,16 @@ def test_synthetic_kgml_graph_edges_self_loops_and_attributes():
     dataset = _fake_kegg_dataset()
     rna = _small_adata()
 
-    graph = dataset.metabolic_topology(rna, self_loops=False)
+    graph = dataset.metabolic_topology(rna, self_loops=False, rebuild_from_kegg=True)
     assert ("rn:R1", "rn:R2") in graph.edges
     assert ("rn:R2", "rn:R1") in graph.edges
     assert ("rn:R1", "rn:R3") not in graph.edges
     assert ("rn:R3", "rn:R1") not in graph.edges
     assert not list(nx.selfloop_edges(graph))
 
-    graph_with_loops = dataset.metabolic_topology(rna, self_loops=True)
+    graph_with_loops = dataset.metabolic_topology(
+        rna, self_loops=True, rebuild_from_kegg=True
+    )
     assert sorted(nx.selfloop_edges(graph_with_loops)) == [(node, node) for node in graph.nodes]
     assert graph_with_loops.number_of_edges() == graph.number_of_edges() + graph.number_of_nodes()
 
@@ -132,6 +144,59 @@ def test_graph_is_undirected_by_directed_symmetry(general_package_adata_graph_rx
     assert graph.graph.get("undirected_pair_count", len(undirected_pairs)) == 2791
 
 
+@pytest.mark.parametrize(
+    ("filename", "nodes", "edges", "isolates"),
+    [
+        ("mouse_metabolic_graph.pkl", 1249, 5582, 36),
+        ("human_metabolic_graph.pkl", 1268, 5604, 43),
+    ],
+)
+def test_bundled_kegg_graphs(filename, nodes, edges, isolates):
+    path = ROOT / "src" / "mern" / "support" / "data" / "kegg" / filename
+    with path.open("rb") as f:
+        graph = pickle.load(f)
+
+    assert isinstance(graph, nx.DiGraph)
+    assert graph.number_of_nodes() == nodes
+    assert graph.number_of_edges() == edges
+    assert len(list(nx.isolates(graph))) == isolates
+    assert nx.number_of_selfloops(graph) == 0
+    assert set(KeggKGMLMetabolicDataset.OXPHOS_RXNS).issubset(graph)
+    assert all(data == {"weight": 1.0, "sign": 1} for _, _, data in graph.edges(data=True))
+
+
+def test_kegg_cache_writes_are_atomic(tmp_path):
+    text_path = tmp_path / "test.kgml"
+    pickle_path = tmp_path / "test.pkl"
+
+    KeggKGMLMetabolicDataset._atomic_write_text(text_path, "complete")
+    KeggKGMLMetabolicDataset._atomic_pickle_dump({"complete": True}, pickle_path)
+
+    assert text_path.read_text() == "complete"
+    with pickle_path.open("rb") as f:
+        assert pickle.load(f) == {"complete": True}
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_failed_kegg_cache_write_keeps_existing_file(tmp_path, monkeypatch):
+    from mern.support import _metabolic_datasets
+
+    target = tmp_path / "test.pkl"
+    target.write_bytes(b"existing")
+
+    def fail_after_partial_write(value, f, protocol):
+        f.write(b"partial")
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(_metabolic_datasets.pickle, "dump", fail_after_partial_write)
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        KeggKGMLMetabolicDataset._atomic_pickle_dump({"complete": False}, target)
+
+    assert target.read_bytes() == b"existing"
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_isolate_removal_and_retention_contract():
     rna = _small_adata()
 
@@ -143,7 +208,7 @@ def test_isolate_removal_and_retention_contract():
     assert "rn:R3" not in keep_isolates.nodes
 
 
-def test_oxphos_reactions_are_added_with_expected_compounds():
+def test_oxphos_reactions_are_added_with_expected_compounds(mouse_kegg_dataset):
     expected = {
         "rn:R11945": {
             "substrates": {"cpd:C00399", "cpd:C00004"},
@@ -164,20 +229,23 @@ def test_oxphos_reactions_are_added_with_expected_compounds():
         "rn:R00081": {"substrates": {"cpd:C00126"}, "products": {"cpd:C00125"}},
     }
 
-    without_oxphos = KeggKGMLMetabolicDataset(species="mouse", capitalize=False, add_oxphos=False)
-    with_oxphos = KeggKGMLMetabolicDataset(species="mouse", capitalize=False, add_oxphos=True)
+    for reaction, compounds in expected.items():
+        assert set(KeggKGMLMetabolicDataset.OXPHOS_RXNS[reaction]["substrates"]) == compounds[
+            "substrates"
+        ]
+        assert set(KeggKGMLMetabolicDataset.OXPHOS_RXNS[reaction]["products"]) == compounds[
+            "products"
+        ]
 
-    without_names = {reaction.name for reaction in without_oxphos.rxns}
-    with_names = {reaction.name for reaction in with_oxphos.rxns}
-    assert set(expected).isdisjoint(without_names)
-    assert set(expected).issubset(with_names)
-    assert set(expected) == with_names - without_names
+    rna = _small_adata()
+    with_oxphos = mouse_kegg_dataset.metabolic_topology(rna)
+    without_oxphos_dataset = copy.copy(mouse_kegg_dataset)
+    without_oxphos_dataset.add_oxphos = False
+    without_oxphos = without_oxphos_dataset.metabolic_topology(rna)
 
-    by_name = {reaction.name: reaction for reaction in with_oxphos.rxns}
-    for reaction_name, compounds in expected.items():
-        reaction = by_name[reaction_name]
-        assert {compound.name for compound in reaction.substrates} == compounds["substrates"]
-        assert {compound.name for compound in reaction.products} == compounds["products"]
+    assert set(expected).issubset(with_oxphos)
+    assert set(expected).isdisjoint(without_oxphos)
+    assert set(with_oxphos) - set(without_oxphos) == set(expected)
 
 
 def test_get_rxn_genes_filters_to_anndata_var_names_and_module_labels():

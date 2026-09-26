@@ -1,4 +1,5 @@
 from pathlib import Path
+import pickle
 
 import anndata as ad
 import numpy as np
@@ -23,12 +24,32 @@ def mouse_intestine_100(mouse_intestine_100_path):
 @pytest.fixture(scope="session")
 def mouse_kegg_dataset():
     from mern.support import KeggKGMLMetabolicDataset
+    from mern.support import _metabolic_datasets
 
-    return KeggKGMLMetabolicDataset(
-        species="mouse",
-        capitalize=False,
-        add_oxphos=True,
-    )
+    package_data_dir = Path(_metabolic_datasets.__file__).parent / "data" / "kegg"
+    dataset = KeggKGMLMetabolicDataset.__new__(KeggKGMLMetabolicDataset)
+    dataset.species = "mouse"
+    dataset.capitalize_genes = False
+    dataset.package_data_dir = str(package_data_dir)
+    dataset.kegg_species = "mmu"
+    dataset.add_oxphos = True
+    dataset.keep_isolates = False
+
+    with (package_data_dir / "mouse_metabolic_graph.pkl").open("rb") as f:
+        dataset._bundled_graph = pickle.load(f)
+    dataset.rxn_genes = dataset.get_rxn_genes_all()
+
+    # Model tests need reaction labels, but should not depend on live KEGG downloads.
+    reaction_ids = {
+        reaction.removeprefix("rn:")
+        for node in dataset._bundled_graph.nodes
+        for reaction in node.split()
+    }
+    dataset.rxn_info = {reaction_id: {"name": reaction_id} for reaction_id in reaction_ids}
+    dataset.compound_info = {}
+    dataset.pathway_kgmls = {}
+
+    return dataset
 
 
 @pytest.fixture(scope="session")

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from io import StringIO
+from pathlib import Path
+import tempfile
 import networkx as nx
 from anndata import AnnData
 import pickle
@@ -178,6 +180,29 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
     metabolic reactions and pathways from KEGG KGML files.
     """
 
+    OXPHOS_RXNS = {
+        'rn:R11945': {
+            'substrates': ['cpd:C00399', 'cpd:C00004'],
+            'products': ['cpd:C00390', 'cpd:C00003'],
+        },
+        'rn:R13223': {
+            'substrates': ['cpd:C00399', 'cpd:C00042'],
+            'products': ['cpd:C00390', 'cpd:C00122'],
+        },
+        'rn:R13224': {
+            'substrates': ['cpd:C15603', 'cpd:C00125'],
+            'products': ['cpd:C15602', 'cpd:C00126'],
+        },
+        'rn:R02161': {
+            'substrates': ['cpd:C00390', 'cpd:C00125'],
+            'products': ['cpd:C00399', 'cpd:C00126'],
+        },
+        'rn:R00081': {
+            'substrates': ['cpd:C00126'],
+            'products': ['cpd:C00125'],
+        },
+    }
+
     def __init__(
         self,
         species: str,
@@ -195,18 +220,26 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         capitalize
             Whether to capitalize gene names
         """
-        super().__init__(species, config.KEGG_DIR, capitalize)
+        super().__init__(species, config.KEGG_CACHE_DIR, capitalize)
 
+        self.package_data_dir = config.KEGG_DIR
+        self.add_oxphos = add_oxphos
         self.keep_isolates = keep_isolates
+        Path(self.data_dir).mkdir(parents=True, exist_ok=True)
 
         if self.species == 'human':
             self.kegg_species = 'hsa'
+            graph_name = 'human_metabolic_graph.pkl'
         elif self.species == 'mouse':
             self.kegg_species = 'mmu'
+            graph_name = 'mouse_metabolic_graph.pkl'
         else:
             raise ValueError('Not a valid species for KEGG')
-        
-        self.kgml = KGML_parser.read(open(f'{self.data_dir}/{self.kegg_species}01100.kgml', 'r'))
+
+        with open(Path(self.package_data_dir) / graph_name, 'rb') as f:
+            self._bundled_graph = pickle.load(f)
+
+        self.kgml = self._load_or_download_kgml()
         if add_oxphos:
             self.kgml = self.add_oxphos_rxns(self.kgml)
         self.rxns = list(self.kgml.reactions)
@@ -215,18 +248,66 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         self.all_compounds = self.get_all_compounds()
         self.compound_info = self.get_compound_info()
         self.pathway_kgmls = {}
+
+    def _download_notice(self, item: str, cache_location: str = None):
+        if cache_location is None:
+            cache_location = self.data_dir
+        print(
+            f'Downloading {item} from KEGG for {self.species}. '
+            'This uses KEGG access provided for academic use by academic users; '
+            "you are responsible for complying with KEGG's terms. "
+            f'The result will be cached in {cache_location}.'
+        )
+
+    @staticmethod
+    def _atomic_write_text(path: Path, text: str):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='w', dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp', delete=False
+            ) as f:
+                temp_path = Path(f.name)
+                f.write(text)
+            os.replace(temp_path, path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
+
+    @staticmethod
+    def _atomic_pickle_dump(value, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='wb', dir=path.parent, prefix=f'.{path.name}.', suffix='.tmp', delete=False
+            ) as f:
+                temp_path = Path(f.name)
+                pickle.dump(value, f, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(temp_path, path)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
+
+    def _load_or_download_kgml(self):
+        path = Path(self.data_dir) / f'{self.kegg_species}01100.kgml'
+        if path.exists():
+            with path.open() as f:
+                return KGML_parser.read(f)
+
+        self._download_notice(f'{self.kegg_species}01100 KGML')
+        kgml_text = REST.kegg_get(f'{self.kegg_species}01100', 'kgml').read()
+
+        # Parse before caching so an invalid or incomplete response is never installed.
+        kgml = KGML_parser.read(StringIO(kgml_text))
+        self._atomic_write_text(path, kgml_text)
+        return kgml
     
     def add_oxphos_rxns(self, kgml):
         """
         Add oxphos reactions to kgml
         """
-        oxphos_rxns = {
-            'rn:R11945': {'substrates': ['cpd:C00399', 'cpd:C00004'], 'products': ['cpd:C00390', 'cpd:C00003']}, # could add NAD+ and NADPH here
-            'rn:R13223': {'substrates': ['cpd:C00399', 'cpd:C00042'], 'products': ['cpd:C00390', 'cpd:C00122']},
-            'rn:R13224': {'substrates': ['cpd:C15603', 'cpd:C00125'], 'products': ['cpd:C15602', 'cpd:C00126']},
-            'rn:R02161': {'substrates': ['cpd:C00390', 'cpd:C00125'], 'products': ['cpd:C00399', 'cpd:C00126']},
-            'rn:R00081': {'substrates': ['cpd:C00126'], 'products': ['cpd:C00125']},
-        }
+        oxphos_rxns = self.OXPHOS_RXNS
         # Find compounds by name/ID
         def find_compound_id(pathway, compound_name):
             for entry in pathway.entries.values():
@@ -304,12 +385,12 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         return all_compounds
     
     def get_compound_info(self):
-        # Check if KGML reaction info file exists
-        if not os.path.exists(f'{self.data_dir}/{self.kegg_species}_kgml_comp_info.pkl'):
-            print('Compound info file does not yet exist, this may take a while...')
+        path = Path(self.data_dir) / f'{self.kegg_species}_kgml_comp_info.pkl'
+        if not path.exists():
+            self._download_notice(f'{self.kegg_species} compound metadata')
 
             comp_info = {}
-            for i in tqdm(range(0, len(self.all_compounds), 6)):
+            for i in tqdm(range(0, len(self.all_compounds), 10)):
                 comps = self.all_compounds[i:i+10]
                 joined_comps = '+'.join(comps)
                 joined_comps = joined_comps.replace(' ','+')
@@ -320,12 +401,11 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
                         continue
                     else:
                         comp_info[info['id']] = info
-                
-            with open(f'{self.data_dir}/{self.kegg_species}_kgml_comp_info.pkl', 'wb') as f:
-                pickle.dump(comp_info, f)
-        
+
+            self._atomic_pickle_dump(comp_info, path)
+
         else:
-            with open(f'{self.data_dir}/{self.kegg_species}_kgml_comp_info.pkl', 'rb') as f:
+            with path.open('rb') as f:
                 comp_info = pickle.load(f)
         
         return comp_info
@@ -377,17 +457,25 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
 
     def get_rxn_genes_all(
         self,
+        rebuild_from_kegg: bool = False,
     ):
         """
         Gets genes associated with reactions
+
+        Parameters
+        ----------
+        rebuild_from_kegg
+            download the current KEGG reaction-enzyme and enzyme-gene links
+            instead of using the bundled reaction-gene mapping
 
         Returns
         -------
         rxn_genes
             dictionary of rxns to genes
         """
-        if not os.path.exists(f'{self.data_dir}/{self.kegg_species}_kgml_rxn_genes.pkl'):
-            print('Rxn genes file does not yet exist, this may take a while...')
+        path = Path(self.package_data_dir) / f'{self.kegg_species}_kgml_rxn_genes.pkl'
+        if rebuild_from_kegg:
+            self._download_notice(f'{self.kegg_species} reaction-gene links')
 
             reaction_enzyme = process_kegg_link(REST.kegg_link('enzyme', 'reaction'), 'Reaction', 'Enzyme')
             enzyme_gene = process_kegg_link(REST.kegg_link(self.kegg_species, 'enzyme'), 'Enzyme', 'Gene')
@@ -436,14 +524,16 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
                 gene_symbols = []
                 for gene in genes:
                     gene_symbols.append(gene_res_dict[gene.split(':')[1]]['symbol'])
-                
+
                 rxn_gene_symbols[rxn.name] = gene_symbols
-                
-            with open(f'{self.data_dir}/{self.kegg_species}_kgml_rxn_genes.pkl', 'wb') as f:
-                pickle.dump(rxn_gene_symbols, f)
-        
+
+            cache_path = Path(self.data_dir) / f'{self.kegg_species}_kgml_rxn_genes.pkl'
+            self._atomic_pickle_dump(rxn_gene_symbols, cache_path)
         else:
-            with open(f'{self.data_dir}/{self.kegg_species}_kgml_rxn_genes.pkl', 'rb') as f:
+            if not path.exists():
+                raise FileNotFoundError(f'Bundled reaction-gene mapping not found: {path}')
+
+            with path.open('rb') as f:
                 rxn_gene_symbols = pickle.load(f)
 
         if self.capitalize_genes:
@@ -458,11 +548,11 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         """
         Gets KGML reaction info
         """
-        # Check if KGML reaction info file exists
-        if not os.path.exists(f'{self.data_dir}/{self.kegg_species}_kgml_rxn_info.pkl'):
-            print('Rxn info file does not yet exist, this may take a while...')
+        path = Path(self.data_dir) / f'{self.kegg_species}_kgml_rxn_info.pkl'
+        if not path.exists():
+            self._download_notice(f'{self.kegg_species} reaction metadata')
 
-            # flatten rxns 
+            # flatten rxns
             flat_rxns = []
             for rxn in self.rxns:
                 flat_rxns += rxn.name.split(' ')
@@ -479,11 +569,10 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
                         continue
                     else:
                         rxn_info[info['id']] = info
-            with open(f'{self.data_dir}/{self.kegg_species}_kgml_rxn_info.pkl', 'wb') as f:
-                pickle.dump(rxn_info, f)
-        
+            self._atomic_pickle_dump(rxn_info, path)
+
         else:
-            with open(f'{self.data_dir}/{self.kegg_species}_kgml_rxn_info.pkl', 'rb') as f:
+            with path.open('rb') as f:
                 rxn_info = pickle.load(f)
         
         return rxn_info
@@ -606,6 +695,7 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
             try:
                 kgml_to_use = self.pathway_kgmls[pathway]   
             except KeyError:
+                self._download_notice(pathway, 'memory for this dataset instance')
                 temp_kgml = REST.kegg_get(pathway, 'kgml').read()
                 kgml_to_use = KGML_parser.read(StringIO(temp_kgml))
                 self.pathway_kgmls[pathway] = kgml_to_use
@@ -628,9 +718,10 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         self,
         rna: AnnData,
         self_loops: bool = False,
+        rebuild_from_kegg: bool = False,
     ) -> nx.DiGraph:
         """
-        Composes directed rxn-rxn graph based on metabolic topology. uses self.keep_isolates to determine if to include isolated nodes.
+        Return the directed reaction graph.
         
         Parameters
         ----------
@@ -638,12 +729,45 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
             anndata object
         self_loops
             whether or not to include self loop
+        rebuild_from_kegg
+            rebuild the graph from the current KEGG KGML instead of using the
+            reproducible graph bundled with MERN
 
         Returns
         --------
         graph
             metabolic topology graph
         """
+        if rebuild_from_kegg:
+            graph = self._metabolic_topology_from_kgml(rna)
+        else:
+            graph = self._bundled_graph.copy()
+
+            if not self.add_oxphos:
+                graph.remove_nodes_from(self.OXPHOS_RXNS)
+
+            isolates = list(nx.isolates(graph))
+            if self.keep_isolates:
+                dataset_genes = set(rna.var_names)
+                graph.remove_nodes_from(
+                    rxn
+                    for rxn in isolates
+                    if not dataset_genes.intersection(self.rxn_genes.get(rxn, []))
+                )
+            else:
+                graph.remove_nodes_from(isolates)
+
+        nx.set_edge_attributes(graph, 1.0, 'weight')
+        nx.set_edge_attributes(graph, 1, 'sign')
+
+        if self_loops:
+            for node in graph.nodes:
+                graph.add_edge(node, node, weight=1.0, sign=1)
+
+        return graph
+
+    def _metabolic_topology_from_kgml(self, rna: AnnData) -> nx.DiGraph:
+        """Build the reaction graph using the downloaded KGML."""
         edge_list = []
         for i in range(len(self.rxns)):
             
@@ -685,14 +809,6 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
                         if gene in rna.var_names:
                             graph.add_node(rxn)
                             break
-
-        # add weights and signs, can pass in dictionary here to be dependent on edge
-        nx.set_edge_attributes(graph, 1.0, 'weight')
-        nx.set_edge_attributes(graph, 1, 'sign')
-        
-        if self_loops:
-            for node in graph.nodes:
-                graph.add_edge(node, node, weight=1.0, sign=1)
 
         return graph
 

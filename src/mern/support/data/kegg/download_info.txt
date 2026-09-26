@@ -1,2 +1,0 @@
-curl https://rest.kegg.jp/get/hsa01100/kgml > hsa01100.kgml
-curl https://rest.kegg.jp/get/mmu01100/kgml > mmu01100.kgml

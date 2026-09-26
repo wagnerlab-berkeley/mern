@@ -39,6 +39,9 @@ tests/repro_outputs/
 
 # Local data and logs
 *.log
+src/mern/support/data/kegg/*01100.kgml
+src/mern/support/data/kegg/*_kgml_comp_info.pkl
+src/mern/support/data/kegg/*_kgml_rxn_info.pkl
 
 # Tutorial checkpoints unzipped
 docs/source/tutorials/model/mern_rep_*/model.pt

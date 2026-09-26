@@ -364,6 +364,31 @@ Cao, Z.-J. and Gao, G. Multi-omics single-cell data integration and regulatory
 inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
 (2022). https://doi.org/10.1038/s41587-022-01284-4
 
+### KEGG data and reproducibility
+
+MeRN includes fixed, KEGG-derived reaction graphs and reaction-gene mappings for
+human and mouse. These bundled resources are used by default so that model inputs
+do not change when KEGG is updated. MeRN does not include KGML files or downloaded
+KEGG reaction and compound records.
+
+Creating a `KeggKGMLMetabolicDataset` downloads the current species KGML and, when
+they are not already cached, current reaction and compound metadata from the KEGG
+REST API. MeRN prints a notice before each download and stores completed downloads
+under `~/.cache/mern/kegg` (or `$XDG_CACHE_HOME/mern/kegg`). Downloads are written
+under temporary names and moved into place only after they complete successfully.
+Once a KGML or metadata cache file exists, MeRN reuses that complete snapshot
+without silently supplementing it with records downloaded later.
+
+`metabolic_topology()` uses the bundled graph by default. Pass
+`rebuild_from_kegg=True` to rebuild it from the downloaded KGML. The bundled
+reaction-gene mapping is also the default; call
+`get_rxn_genes_all(rebuild_from_kegg=True)` to explicitly download and rebuild it.
+Live results may change when KEGG is updated.
+
+The KEGG REST API is provided for academic use by academic users. Users are
+responsible for ensuring that their use complies with the [KEGG API
+restrictions](https://www.kegg.jp/kegg/rest/) and [KEGG terms](https://www.kegg.jp/kegg/legal.html).
+
 ## Citation
 
 ### MeRN
