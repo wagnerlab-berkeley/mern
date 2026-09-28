@@ -29,7 +29,7 @@ Documentation sources live under `docs/source`. The main Sphinx entry point is
 `docs/source/tutorials/MeRN_tutorial.ipynb`. Built documentation is
 written to `docs/build/html`.
 
-Install the package in editable mode:
+From a local checkout, install the package in editable mode:
 
 ```bash
 pip install -e .
@@ -48,9 +48,19 @@ Then open `docs/build/html/index.html` in a browser.
 
 We recommend running `mern` on a recent Linux or macOS system with Python >= 3.10.
 
-Install the package in editable mode with:
+A PyPI package is currently being prepared. Until it is available, install the
+latest version directly from GitHub with:
 
 ```bash
+pip install "git+https://github.com/wagnerlab-berkeley/mern.git"
+```
+
+For development, clone the repository and install the local checkout in editable
+mode:
+
+```bash
+git clone https://github.com/wagnerlab-berkeley/mern.git
+cd mern
 pip install -e .
 ```
 
@@ -59,7 +69,7 @@ tools, and documentation build tools.
 
 If installation fails while building `pygraphviz`, install Graphviz first
 (`brew install graphviz` on macOS, or `conda install -c conda-forge graphviz pygraphviz`
-inside a conda environment), then rerun the editable install.
+inside a conda environment), then rerun the installation.
 
 ## Quick Start
 
