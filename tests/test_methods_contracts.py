@@ -197,6 +197,35 @@ def test_failed_kegg_cache_write_keeps_existing_file(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+def test_reaction_metadata_download_includes_bundled_graph_reactions(tmp_path, monkeypatch):
+    from mern.support import _metabolic_datasets
+
+    dataset = _fake_kegg_dataset()
+    dataset.species = "mouse"
+    dataset.data_dir = str(tmp_path)
+    dataset.kegg_species = "mmu"
+    dataset.rxns = [_Reaction("rn:R12658 rn:R13426")]
+    dataset._bundled_graph = nx.DiGraph()
+    dataset._bundled_graph.add_node("rn:R12658 rn:R13426 rn:R13440")
+
+    requested = []
+
+    class _Response:
+        def read(self):
+            return "reaction///"
+
+    def fake_kegg_get(reactions):
+        requested.extend(reactions.split("+"))
+        return _Response()
+
+    monkeypatch.setattr(_metabolic_datasets.REST, "kegg_get", fake_kegg_get)
+    monkeypatch.setattr(dataset, "parse_rxn", lambda _: {"id": "R12658"})
+
+    dataset.get_kgml_rxn_info()
+
+    assert requested == ["rn:R12658", "rn:R13426", "rn:R13440"]
+
+
 def test_isolate_removal_and_retention_contract():
     rna = _small_adata()
 

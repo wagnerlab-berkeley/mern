@@ -556,6 +556,9 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
             flat_rxns = []
             for rxn in self.rxns:
                 flat_rxns += rxn.name.split(' ')
+            for node in self._bundled_graph.nodes:
+                flat_rxns += node.split(' ')
+            flat_rxns = list(dict.fromkeys(flat_rxns))
 
             rxn_info = {}
             for i in tqdm(range(0, len(flat_rxns), 10)):
