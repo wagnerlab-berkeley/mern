@@ -253,10 +253,10 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         if cache_location is None:
             cache_location = self.data_dir
         print(
-            f'Downloading {item} from KEGG for {self.species}. '
+            f'Initiating one-time download from KEGG for {self.species}: {item}. '
             'This uses KEGG access provided for academic use by academic users; '
             "you are responsible for complying with KEGG's terms. "
-            f'The result will be cached in {cache_location}.'
+            f'the result will be cached in {cache_location} and reused.'
         )
 
     @staticmethod
