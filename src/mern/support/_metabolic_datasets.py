@@ -588,6 +588,9 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         """
         Gets KGML reaction info
         """
+        if not self.rebuild_from_kegg:
+            raise ValueError('get_kgml_rxn_info() requires rebuild_from_kegg=True.')
+
         path = Path(self.data_dir) / f'{self.kegg_species}_kgml_rxn_info.pkl'
         if not path.exists():
             self._download_notice(f'{self.kegg_species} reaction metadata')

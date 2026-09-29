@@ -200,6 +200,32 @@ def test_failed_kegg_cache_write_keeps_existing_file(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp"))
 
 
+@pytest.mark.parametrize("cache_exists", [False, True])
+def test_reaction_metadata_rejects_bundled_mode(tmp_path, monkeypatch, cache_exists):
+    from mern.support import _metabolic_datasets
+
+    dataset = _fake_kegg_dataset()
+    dataset.data_dir = str(tmp_path)
+    dataset.kegg_species = "mmu"
+    dataset.kegg_rxns = []
+    path = tmp_path / "mmu_kgml_rxn_info.pkl"
+    cached_bytes = pickle.dumps({"R00351": {"name": "Reaction"}})
+    if cache_exists:
+        path.write_bytes(cached_bytes)
+
+    def fail_download(*args, **kwargs):
+        raise AssertionError("bundled mode must fail before downloading metadata")
+
+    monkeypatch.setattr(_metabolic_datasets.REST, "kegg_get", fail_download)
+
+    with pytest.raises(ValueError, match="requires rebuild_from_kegg=True"):
+        dataset.get_kgml_rxn_info()
+
+    assert path.exists() == cache_exists
+    if cache_exists:
+        assert path.read_bytes() == cached_bytes
+
+
 def test_reaction_metadata_download_uses_current_kegg_reactions(tmp_path, monkeypatch):
     from mern.support import _metabolic_datasets
 
@@ -207,6 +233,7 @@ def test_reaction_metadata_download_uses_current_kegg_reactions(tmp_path, monkey
     dataset.species = "mouse"
     dataset.data_dir = str(tmp_path)
     dataset.kegg_species = "mmu"
+    dataset.rebuild_from_kegg = True
     dataset.kegg_rxns = [_Reaction("rn:R12658 rn:R13426")]
 
     requested = []
