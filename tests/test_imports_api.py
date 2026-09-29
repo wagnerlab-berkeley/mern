@@ -6,7 +6,7 @@ import sys
 def test_public_imports_and_version():
     import mern
 
-    assert mern.__version__ == "1.0.1"
+    assert mern.__version__ == "1.0.2"
     assert mern.MERN.__name__ == "MERN"
     assert mern.MERNModule.__name__ == "MERNModule"
     assert mern.MERNDataLoader.__name__ == "MERNDataLoader"
@@ -18,7 +18,7 @@ def test_support_import_does_not_eagerly_import_plots():
     support = importlib.import_module("mern.support")
 
     assert "mern.support._plots" not in sys.modules
-    assert support.__version__ == "1.0.1"
+    assert support.__version__ == "1.0.2"
 
 
 def test_support_plot_exports_lazy_load_when_accessed():
