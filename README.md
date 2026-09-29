@@ -24,6 +24,9 @@ This structure links latent dimensions to reaction activity and enzyme-coding ge
 
 ## Documentation
 
+The documentation and tutorial are available at
+[wagnerlab-berkeley.github.io/mern](https://wagnerlab-berkeley.github.io/mern/).
+
 Documentation sources live under `docs/source`. The main Sphinx entry point is
 `docs/source/index.rst`, and the tutorial notebook currently lives in
 `docs/source/tutorials/MeRN_tutorial.ipynb`. Built documentation is
