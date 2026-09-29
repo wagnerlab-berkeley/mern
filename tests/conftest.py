@@ -34,6 +34,7 @@ def mouse_kegg_dataset():
     dataset.kegg_species = "mmu"
     dataset.add_oxphos = True
     dataset.keep_isolates = False
+    dataset.rebuild_from_kegg = False
 
     with (package_data_dir / "mouse_metabolic_graph.pkl").open("rb") as f:
         dataset._bundled_graph = pickle.load(f)

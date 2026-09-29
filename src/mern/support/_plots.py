@@ -1234,15 +1234,18 @@ def kegg_pathway_plot(
     compound_graph = nx.Graph()
     use_rxns = []
     for reaction in dataset.rxns:
-        use_rxn = False
-        for r in reaction.name.split(' '):
-            r_pathways = [p[0] for p in dataset.rxn_info[r.split('rn:')[1]]['PATHWAY']]
-            if pathway in r_pathways:
-                use_rxn = True
-                use_rxns.append(reaction.name)
-                break
-        if not use_rxn:
+        if dataset.rebuild_from_kegg:
+            reaction_pathways = []
+            for reaction_id in reaction.name.split(' '):
+                reaction_pathways += [
+                    value[0]
+                    for value in dataset.rxn_info[reaction_id.removeprefix('rn:')]['PATHWAY']
+                ]
+        else:
+            reaction_pathways = reaction.reaction_info['Pathways'].split(';')
+        if pathway not in reaction_pathways:
             continue
+        use_rxns.append(reaction.name)
         substrates = [s.name for s in reaction.substrates]
         products = [p.name for p in reaction.products]
         # Add edges for each substrate-product pair

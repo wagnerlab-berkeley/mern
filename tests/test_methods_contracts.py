@@ -1,5 +1,6 @@
 import ast
 import copy
+from io import StringIO
 from pathlib import Path
 import pickle
 
@@ -47,6 +48,7 @@ def _fake_kegg_dataset(keep_isolates=False):
     dataset = KeggKGMLMetabolicDataset.__new__(KeggKGMLMetabolicDataset)
     dataset.add_oxphos = True
     dataset.keep_isolates = keep_isolates
+    dataset.rebuild_from_kegg = False
     dataset.rxns = [
         _Reaction("rn:R1", substrates=["cpd:A"], products=["cpd:B"]),
         _Reaction("rn:R2", substrates=["cpd:B"], products=["cpd:C"]),
@@ -54,6 +56,8 @@ def _fake_kegg_dataset(keep_isolates=False):
         _Reaction("rn:R1", substrates=["cpd:B"], products=["cpd:D"]),
         _Reaction("rn:R4", substrates=["cpd:Q"], products=["cpd:R"]),
     ]
+    dataset.kegg_rxns = dataset.rxns
+    dataset.rxn_info = None
     dataset.rxn_genes = {
         "rn:R1": ["GeneA"],
         "rn:R2": ["GeneB"],
@@ -114,16 +118,15 @@ def test_synthetic_kgml_graph_edges_self_loops_and_attributes():
     dataset = _fake_kegg_dataset()
     rna = _small_adata()
 
-    graph = dataset.metabolic_topology(rna, self_loops=False, rebuild_from_kegg=True)
+    dataset.rebuild_from_kegg = True
+    graph = dataset.metabolic_topology(rna, self_loops=False)
     assert ("rn:R1", "rn:R2") in graph.edges
     assert ("rn:R2", "rn:R1") in graph.edges
     assert ("rn:R1", "rn:R3") not in graph.edges
     assert ("rn:R3", "rn:R1") not in graph.edges
     assert not list(nx.selfloop_edges(graph))
 
-    graph_with_loops = dataset.metabolic_topology(
-        rna, self_loops=True, rebuild_from_kegg=True
-    )
+    graph_with_loops = dataset.metabolic_topology(rna, self_loops=True)
     assert sorted(nx.selfloop_edges(graph_with_loops)) == [(node, node) for node in graph.nodes]
     assert graph_with_loops.number_of_edges() == graph.number_of_edges() + graph.number_of_nodes()
 
@@ -197,16 +200,14 @@ def test_failed_kegg_cache_write_keeps_existing_file(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp"))
 
 
-def test_reaction_metadata_download_includes_bundled_graph_reactions(tmp_path, monkeypatch):
+def test_reaction_metadata_download_uses_current_kegg_reactions(tmp_path, monkeypatch):
     from mern.support import _metabolic_datasets
 
     dataset = _fake_kegg_dataset()
     dataset.species = "mouse"
     dataset.data_dir = str(tmp_path)
     dataset.kegg_species = "mmu"
-    dataset.rxns = [_Reaction("rn:R12658 rn:R13426")]
-    dataset._bundled_graph = nx.DiGraph()
-    dataset._bundled_graph.add_node("rn:R12658 rn:R13426 rn:R13440")
+    dataset.kegg_rxns = [_Reaction("rn:R12658 rn:R13426")]
 
     requested = []
 
@@ -223,7 +224,172 @@ def test_reaction_metadata_download_includes_bundled_graph_reactions(tmp_path, m
 
     dataset.get_kgml_rxn_info()
 
-    assert requested == ["rn:R12658", "rn:R13426", "rn:R13440"]
+    assert requested == ["rn:R12658", "rn:R13426"]
+
+
+@pytest.mark.parametrize("rebuild_from_kegg", [False, True])
+@pytest.mark.parametrize("capitalize", [False, True])
+def test_reaction_gene_mapping_reuses_selected_file(
+    tmp_path, monkeypatch, rebuild_from_kegg, capitalize
+):
+    from mern.support import _metabolic_datasets
+
+    dataset = _fake_kegg_dataset()
+    dataset.species = "mouse"
+    dataset.kegg_species = "mmu"
+    dataset.capitalize_genes = capitalize
+    dataset.data_dir = str(tmp_path / "cache")
+    dataset.package_data_dir = str(tmp_path / "package")
+    files = {}
+    for directory, gene in [
+        (dataset.data_dir, "CachedGene"),
+        (dataset.package_data_dir, "BundledGene"),
+    ]:
+        path = Path(directory) / "mmu_kgml_rxn_genes.pkl"
+        path.parent.mkdir()
+        files[path] = pickle.dumps({"rn:R1": [gene]})
+        path.write_bytes(files[path])
+
+    def fail_network(*args, **kwargs):
+        raise AssertionError("existing reaction-gene mappings must not access the network")
+
+    monkeypatch.setattr(_metabolic_datasets.REST, "kegg_link", fail_network)
+    monkeypatch.setattr(_metabolic_datasets.mygene, "MyGeneInfo", fail_network)
+
+    result = dataset.get_rxn_genes_all(rebuild_from_kegg=rebuild_from_kegg)
+
+    gene = "CachedGene" if rebuild_from_kegg else "BundledGene"
+    assert result == {"rn:R1": [gene.upper() if capitalize else gene]}
+    assert all(path.read_bytes() == original for path, original in files.items())
+
+
+def test_reaction_gene_mapping_download_is_cached(tmp_path, monkeypatch):
+    from mern.support import _metabolic_datasets
+
+    dataset = _fake_kegg_dataset()
+    dataset.species = "mouse"
+    dataset.kegg_species = "mmu"
+    dataset.capitalize_genes = True
+    dataset.data_dir = str(tmp_path / "cache")
+    dataset.package_data_dir = str(tmp_path / "package")
+    dataset.kegg_rxns = [_Reaction("rn:R1")]
+
+    links = {
+        ("enzyme", "reaction"): "rn:R1\tec:1.1.1.1\n",
+        ("mmu", "enzyme"): "ec:1.1.1.1\tmmu:123\n",
+    }
+    monkeypatch.setattr(
+        _metabolic_datasets.REST, "kegg_link", lambda *args: StringIO(links[args])
+    )
+
+    class FakeMyGene:
+        def querymany(self, genes, species):
+            assert genes == ["123"]
+            assert species == "mouse"
+            return [{"query": "123", "symbol": "GeneA"}]
+
+    monkeypatch.setattr(_metabolic_datasets.mygene, "MyGeneInfo", FakeMyGene)
+    assert dataset.get_rxn_genes_all(rebuild_from_kegg=True) == {"rn:R1": ["GENEA"]}
+
+    cache_path = Path(dataset.data_dir) / "mmu_kgml_rxn_genes.pkl"
+    cached_bytes = cache_path.read_bytes()
+    assert pickle.loads(cached_bytes) == {"rn:R1": ["GeneA"]}
+    assert not Path(dataset.package_data_dir).exists()
+
+    def fail_network(*args, **kwargs):
+        raise AssertionError("the downloaded mapping must be reused on the next call")
+
+    monkeypatch.setattr(_metabolic_datasets.REST, "kegg_link", fail_network)
+    monkeypatch.setattr(_metabolic_datasets.mygene, "MyGeneInfo", fail_network)
+    dataset.capitalize_genes = False
+    assert dataset.get_rxn_genes_all(rebuild_from_kegg=True) == {"rn:R1": ["GeneA"]}
+    assert cache_path.read_bytes() == cached_bytes
+
+
+def test_constructor_selects_current_kegg_data(tmp_path, monkeypatch):
+    from mern.support import _metabolic_datasets
+
+    current_reactions = [_Reaction("rn:R1", substrates=["cpd:A"], products=["cpd:B"])]
+    current_info = {"R1": {"name": "Reaction 1"}}
+    rebuild_gene_args = []
+
+    monkeypatch.setattr(_metabolic_datasets.config, "KEGG_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        KeggKGMLMetabolicDataset,
+        "_load_or_download_kgml",
+        lambda self: type("KGML", (), {"reactions": current_reactions})(),
+    )
+    monkeypatch.setattr(
+        KeggKGMLMetabolicDataset, "get_kgml_rxn_info", lambda self: current_info
+    )
+    monkeypatch.setattr(
+        KeggKGMLMetabolicDataset,
+        "get_rxn_genes_all",
+        lambda self, rebuild_from_kegg=False: rebuild_gene_args.append(rebuild_from_kegg) or {},
+    )
+    monkeypatch.setattr(KeggKGMLMetabolicDataset, "get_compound_info", lambda self: {})
+
+    dataset = KeggKGMLMetabolicDataset(
+        "mouse", add_oxphos=False, rebuild_from_kegg=True
+    )
+
+    assert dataset.rxns is dataset.kegg_rxns
+    assert dataset.rxn_info is current_info
+    assert rebuild_gene_args == [True]
+
+
+def test_default_constructor_does_not_load_species_kgml(tmp_path, monkeypatch):
+    from mern.support import _metabolic_datasets
+
+    monkeypatch.setattr(_metabolic_datasets.config, "KEGG_CACHE_DIR", str(tmp_path))
+
+    def fail_download(self):
+        raise AssertionError("default construction should not load the species KGML")
+
+    monkeypatch.setattr(KeggKGMLMetabolicDataset, "_load_or_download_kgml", fail_download)
+    monkeypatch.setattr(
+        KeggKGMLMetabolicDataset,
+        "get_rxn_genes_all",
+        lambda self, rebuild_from_kegg=False: {},
+    )
+    monkeypatch.setattr(KeggKGMLMetabolicDataset, "get_compound_info", lambda self: {})
+
+    dataset = KeggKGMLMetabolicDataset("mouse")
+
+    assert dataset.kgml is None
+    assert dataset.kegg_rxns == []
+    assert dataset.rxns is dataset._bundled_rxns
+
+
+def test_bundled_reaction_annotations_do_not_download(mouse_kegg_dataset, monkeypatch):
+    rna = _small_adata()
+    graph = mouse_kegg_dataset.metabolic_topology(rna)
+
+    def fail_download():
+        raise AssertionError("bundled annotations should not download reaction metadata")
+
+    monkeypatch.setattr(mouse_kegg_dataset, "get_kgml_rxn_info", fail_download)
+    mouse_kegg_dataset.add_rxn_module_info(rna, graph)
+
+    expected = {
+        node: graph.nodes[node]["reaction_info"]
+        for node in graph.nodes
+    }
+    assert rna.uns["Reaction Info"].to_dict("index") == expected
+
+
+def test_live_reaction_annotations_download_on_demand(monkeypatch):
+    dataset = _fake_kegg_dataset()
+    graph = nx.DiGraph()
+    graph.add_node("rn:R1")
+    downloaded = {"R1": {"name": "Reaction 1"}}
+    monkeypatch.setattr(dataset, "get_kgml_rxn_info", lambda: downloaded)
+
+    rna = _small_adata()
+    dataset.add_rxn_module_info(rna, graph)
+
+    assert dataset.rxn_info is downloaded
+    assert rna.uns["Reaction Info"].loc["rn:R1", "Rxn Name"] == "Reaction 1"
 
 
 def test_isolate_removal_and_retention_contract():

@@ -376,28 +376,31 @@ inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
 
 ### KEGG data and reproducibility
 
-MeRN includes fixed, KEGG-derived reaction graphs and reaction-gene mappings for
-human and mouse. These bundled resources are used by default so that model inputs
-do not change when KEGG is updated. MeRN does not include KGML files or downloaded
-KEGG reaction and compound records.
+MeRN includes fixed, KEGG-derived human and mouse reaction graphs,
+reaction-gene mappings, and the associated information needed for training and
+plotting. These resources were generated from a [KEGG Release 113.0-era
+snapshot](https://www.kegg.jp/kegg/docs/relnote.html) dated January 15, 2025.
+MeRN uses this fixed snapshot for reproducibility and does not provide or
+continually distribute snapshots of newer KEGG releases.
 
-Creating a `KeggKGMLMetabolicDataset` downloads the current species KGML and, when
-they are not already cached, current reaction and compound metadata from the KEGG
-REST API. MeRN prints a notice before each download and stores completed downloads
-under `~/.cache/mern/kegg` (or `$XDG_CACHE_HOME/mern/kegg`). Downloads are written
-under temporary names and moved into place only after they complete successfully.
-Once a KGML or metadata cache file exists, MeRN reuses that complete snapshot
-without silently supplementing it with records downloaded later.
+To rebuild the dataset using current KEGG data, use:
 
-`metabolic_topology()` uses the bundled graph by default. Pass
-`rebuild_from_kegg=True` to rebuild it from the downloaded KGML. The bundled
-reaction-gene mapping is also the default; call
-`get_rxn_genes_all(rebuild_from_kegg=True)` to explicitly download and rebuild it.
-Live results may change when KEGG is updated.
+```python
+import mern.support as mern_support
 
-The KEGG REST API is provided for academic use by academic users. Users are
-responsible for ensuring that their use complies with the [KEGG API
-restrictions](https://www.kegg.jp/kegg/rest/) and [KEGG terms](https://www.kegg.jp/kegg/legal.html).
+dataset = mern_support.KeggKGMLMetabolicDataset(
+    species="mouse", rebuild_from_kegg=True
+)
+```
+
+This option queries KEGG and relies on the academic access provided by the KEGG
+REST API. Users are responsible for complying with the [KEGG API
+restrictions](https://www.kegg.jp/kegg/rest/) and [KEGG
+terms](https://www.kegg.jp/kegg/legal.html). Because KEGG data and API results
+can change over time, users who rebuild the dataset should retain a copy of the
+downloaded files from `~/.cache/mern/kegg` (or `$XDG_CACHE_HOME/mern/kegg`) for
+reproducibility. Pathway plots may also download the pathway-specific KGML used
+for their layout.
 
 ## Citation
 
