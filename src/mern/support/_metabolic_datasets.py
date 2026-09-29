@@ -283,7 +283,7 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
                     ))
             self.rxns = self._bundled_rxns
             self.rxn_info = None
-        self.rxn_genes = self.get_rxn_genes_all(rebuild_from_kegg=rebuild_from_kegg)
+        self.rxn_genes = self.get_rxn_genes_all()
         self.all_compounds = self.get_all_compounds()
         self.compound_info = self.get_compound_info()
         self.pathway_kgmls = {}
@@ -500,27 +500,22 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
                     
         return info
 
-    def get_rxn_genes_all(
-        self,
-        rebuild_from_kegg: bool = False,
-    ):
+    def get_rxn_genes_all(self):
         """
-        Gets genes associated with reactions
+        Gets genes associated with reactions using the constructor's data mode.
 
-        Parameters
-        ----------
-        rebuild_from_kegg
-            use the cached reaction-gene mapping instead of the bundled mapping;
-            download current KEGG links only when the cache file is missing
+        When rebuild_from_kegg is True, use the cached reaction-gene mapping
+        and download current KEGG links only if that cache file is missing.
+        Otherwise, use the bundled mapping.
 
         Returns
         -------
         rxn_genes
             dictionary of rxns to genes
         """
-        data_dir = self.data_dir if rebuild_from_kegg else self.package_data_dir
+        data_dir = self.data_dir if self.rebuild_from_kegg else self.package_data_dir
         path = Path(data_dir) / f'{self.kegg_species}_kgml_rxn_genes.pkl'
-        if rebuild_from_kegg and not path.exists():
+        if self.rebuild_from_kegg and not path.exists():
             self._download_notice(f'{self.kegg_species} reaction-gene links')
 
             reaction_enzyme = process_kegg_link(REST.kegg_link('enzyme', 'reaction'), 'Reaction', 'Enzyme')
