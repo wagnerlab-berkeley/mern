@@ -1241,6 +1241,14 @@ def kegg_pathway_plot(
                     value[0]
                     for value in dataset.rxn_info[reaction_id.removeprefix('rn:')]['PATHWAY']
                 ]
+        elif reaction.reaction_info is None:
+            # Extra-only reactions have no bundled pathway annotation. Use the
+            # same pathway KGML that supplies this plot's coordinates.
+            kgml = dataset._get_pathway_kgml(pathway)
+            reaction_ids = set(reaction.name.split())
+            if not any(reaction_ids.intersection(r.name.split()) for r in kgml.reactions):
+                continue
+            reaction_pathways = [pathway]
         else:
             reaction_pathways = reaction.reaction_info['Pathways'].split(';')
         if pathway not in reaction_pathways:

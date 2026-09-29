@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from io import StringIO
 from pathlib import Path
+import json
 import tempfile
 import networkx as nx
 from anndata import AnnData
@@ -265,6 +266,21 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
             self.rxns = self.kegg_rxns
             self.rxn_info = self.get_kgml_rxn_info()
         else:
+            # Keep each extra pair separate to avoid creating cross-product edges.
+            path = Path(self.package_data_dir) / f'{self.species}_compound_links.json'
+            with path.open() as f:
+                for name, substrate, product in json.load(f):
+                    if not add_oxphos and name in self.OXPHOS_RXNS:
+                        continue
+                    self._bundled_rxns.append(SimpleNamespace(
+                        name=name,
+                        substrates=[SimpleNamespace(name=substrate)],
+                        products=[SimpleNamespace(name=product)],
+                        reaction_info=(
+                            self._bundled_graph.nodes[name]['reaction_info']
+                            if name in self._bundled_graph else None
+                        ),
+                    ))
             self.rxns = self._bundled_rxns
             self.rxn_info = None
         self.rxn_genes = self.get_rxn_genes_all(rebuild_from_kegg=rebuild_from_kegg)
@@ -696,6 +712,17 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
         
         return info
 
+    def _get_pathway_kgml(self, pathway: str):
+        if pathway not in self.pathway_kgmls:
+            self._download_notice(
+                pathway,
+                'memory for this dataset instance',
+                one_time=False,
+            )
+            temp_kgml = REST.kegg_get(pathway, 'kgml').read()
+            self.pathway_kgmls[pathway] = KGML_parser.read(StringIO(temp_kgml))
+        return self.pathway_kgmls[pathway]
+
     def _get_kgml_entry(self, compound_name: str, pathway: str = None):
         """
         Retrieve the KGML entry corresponding to the specified compound name.
@@ -722,17 +749,7 @@ class KeggKGMLMetabolicDataset(MetabolicDataset):
             If no entry matching the compound name is found.
         """
         if pathway is not None:
-            try:
-                kgml_to_use = self.pathway_kgmls[pathway]   
-            except KeyError:
-                self._download_notice(
-                    pathway,
-                    'memory for this dataset instance',
-                    one_time=False,
-                )
-                temp_kgml = REST.kegg_get(pathway, 'kgml').read()
-                kgml_to_use = KGML_parser.read(StringIO(temp_kgml))
-                self.pathway_kgmls[pathway] = kgml_to_use
+            kgml_to_use = self._get_pathway_kgml(pathway)
         else:
             if self.kgml is None:
                 self.kgml = self._load_or_download_kgml()
