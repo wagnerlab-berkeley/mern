@@ -7,17 +7,27 @@ knockout embryos.
 
 ## Running it
 
+The notebook, example data, and pretrained models are included in the GitHub
+repository. Installing `mern` with pip installs the library; clone the repository
+to get the complete tutorial:
+
 ```bash
-cd docs/source/tutorials
+git clone https://github.com/wagnerlab-berkeley/mern.git
+cd mern/docs/source/tutorials
 conda env create -f environment.yml
 conda activate mern-tutorial
 jupyter lab MeRN_tutorial.ipynb
 ```
 
+If you already have a clone, start from its `docs/source/tutorials` directory
+and run the environment and notebook commands above.
+
 Create the environment from this directory: `environment.yml` installs the `mern` package from the
 surrounding clone by relative path.
 
-Everything the notebook reads is in this directory.
+The supplied data are already prepared, and the notebook loads pretrained models
+on CPU by default. You can run the analyses without preprocessing data or
+training new models. Everything the notebook reads is in this directory.
 
 The first run expands the five model checkpoints to about 524 MB. Kaleido 1.x also requires
 Chrome for the notebook's static image exports; if Chrome is not installed, run

@@ -1,383 +1,157 @@
 # Metabolic Representation Net (MeRN)
 
-`mern` is a Python package for graph-guided metabolic representation learning from single-cell transcriptomic data. It builds on `scvi-tools` and `anndata`, providing APIs for learning interpretable metabolic latent structure, working with metabolic reaction graphs, and analyzing metabolic programs from single-cell RNA-seq data.
+[Install](#installation) | [Tutorial](https://wagnerlab-berkeley.github.io/mern/) | [Paper](https://doi.org/10.64898/2026.09.17.751504) | [Citation](#citation)
 
-## MeRN overview
+MeRN infers single-cell metabolic states from transcriptomic data by jointly
+modeling a graph representation of the metabolic network and enzyme-coding gene
+expression with a graph-guided variational autoencoder.
 
-Single-cell RNA-seq data provides rich information about gene expression across thousands of cells, but interpreting cellular metabolism from transcriptomic data alone is challenging. Many metabolic processes are coordinated across genes and reactions, making them difficult to capture with standard dimensionality reduction methods.
+MeRN provides two complementary descriptions of metabolic state:
 
-Metabolic Representation Net (MeRN) is a graph-guided variational autoencoder designed to infer metabolic state from single-cell transcriptomic data.
+1. **A metabolic latent space**, useful for clustering cells, pseudotime analysis,
+   and visualization based on metabolic variability. The model also learns a
+   non-metabolic latent space, enabling comparison of metabolic and non-metabolic
+   variation.
+2. **An inferred reaction activity matrix**, which captures the relative activity
+   of every reaction across cells and enables comparison of reaction- or
+   pathway-level metabolic activity across cell types, states, and experimental
+   conditions.
 
-Standard VAEs such as scVI learn low-dimensional latent representations of cells and decode them to gene-level parameters using flexible neural networks. While these models capture complex transcriptional structure, the latent dimensions are not explicitly linked to metabolic processes.
+**Metabolic data-driven pathways (DDPs).** Using a graph-constrained
+agglomerative clustering procedure on inferred reaction activity, MeRN defines
+connected modules supported by transcriptomic evidence, allowing you to learn
+pathway definitions for the cellular context you are interested in.
+**Weakest link analysis** identifies DDPs whose metabolic coordination breaks
+between baseline and perturbed conditions.
 
-MeRN introduces a metabolic prior by leveraging a metabolic reaction graph, where:
+The package also supports **metabolic directions** for comparing metabolic and
+non-metabolic perturbation effects, **scoring of KEGG pathways and DDPs**,
+differential activity analysis, and **visualization of KEGG or custom pathways**
+with relevant information such as inferred reaction activity, changes in
+activity between conditions, and DDP membership.
 
-- nodes represent metabolic reactions
-- edges connect reactions that share metabolites
+## Requirements
 
-A graph VAE learns embeddings of this reaction network, and the cell-level latent space is decomposed into two components:
-
-- Metabolic variation: variation explained by metabolic reactions
-- Non-metabolic variation: transcriptomic variation explained by genes not encoding enzymes
-
-This structure links latent dimensions to reaction activity and enzyme-coding genes, enabling interpretable metabolic representations.
-
-## Documentation
-
-The documentation and tutorial are available at
-[wagnerlab-berkeley.github.io/mern](https://wagnerlab-berkeley.github.io/mern/).
-
-Documentation sources live under `docs/source`. The main Sphinx entry point is
-`docs/source/index.rst`, and the tutorial notebook currently lives in
-`docs/source/tutorials/MeRN_tutorial.ipynb`. Built documentation is
-written to `docs/build/html`.
-
-From a local checkout, install the package in editable mode:
-
-```bash
-pip install -e .
-```
-
-Build the tutorial site from the `docs/` directory with:
-
-```bash
-cd docs
-make html
-```
-
-Then open `docs/build/html/index.html` in a browser.
+- **Software:** Python >= 3.10 on Linux or macOS.
+- **Hardware:** CPU execution is supported for the tutorial and small training
+  runs. A CUDA-capable NVIDIA GPU is recommended for larger training runs.
+  RAM and GPU memory needs depend on dataset size and model settings.
 
 ## Installation
 
-We recommend running `mern` on a recent Linux or macOS system with Python >= 3.10.
-
-A PyPI package is currently being prepared. Until it is available, install the
-latest version directly from GitHub with:
+Install from GitHub in a dedicated virtual or conda environment. We recommend
+Python 3.10, which is used in the supplied tutorial environment.
 
 ```bash
-pip install "git+https://github.com/wagnerlab-berkeley/mern.git"
+python -m pip install "git+https://github.com/wagnerlab-berkeley/mern.git"
 ```
 
-For development, clone the repository and install the local checkout in editable
-mode:
+Check that the package imports successfully:
 
 ```bash
-git clone https://github.com/wagnerlab-berkeley/mern.git
-cd mern
-pip install -e .
+python -c "import mern; print(mern.__version__)"
 ```
-
-This installs the model, support utilities, plotting tools, KEGG helpers, test
-tools, and documentation build tools.
 
 If installation fails while building `pygraphviz`, install Graphviz first
 (`brew install graphviz` on macOS, or `conda install -c conda-forge graphviz pygraphviz`
 inside a conda environment), then rerun the installation.
+See the [PyGraphviz installation guide](https://pygraphviz.github.io/documentation/stable/install.html)
+for platform-specific troubleshooting.
 
 ## Quick Start
 
-See the tutorial in the docs folder for a standard preprocessing, training, and analysis workflow. For larger datasets and cluster usage, the following cli can be used.
+Follow the [MeRN tutorial](https://wagnerlab-berkeley.github.io/mern/)
+for a walkthrough of core functionality on mouse embryogenesis data: loading
+or training a model, extracting embeddings, decoding reaction activity, scoring
+pathways, discovering DDPs, visualizing metabolic programs, and comparing
+metabolic coordination with weakest link analysis.
 
-## Training representations from the command line
+The tutorial provides prepared data and pretrained models, so you can explore
+these functions on CPU without preprocessing data or training new models.
+To get the notebook, data, and models from the repository and run it locally,
+follow the [tutorial setup instructions](docs/source/tutorials/README.md).
+These tutorial files are not installed by pip.
 
-Installing the package exposes a `mern` command. The main training entry point is:
+For larger datasets, you may prefer the command-line workflow below to train
+replicate models and average reaction activity.
 
-```bash
-mern train reps \
-  --output_dir /path/to/output \
-  --data_dir /path/to/data \
-  --adata_file mouse_intestine_pp.h5ad.gz
-```
+## Preparing your own data
 
-By default, training reads raw counts from `adata.layers["counts"]`. Use
-`--counts_layer <layer_name>` (or `--counts-layer`) when the counts are stored
-under a different layer name.
+The tutorial includes preprocessed data and example code for selecting highly
+variable genes in your own dataset. Before training on your own data:
 
-This command trains one MERN replicate, saves the model under
-`<output_dir>/mern_rep_<rep>/`, and writes latent representations, graph
-embeddings, train/validation/test indices, clustering, and UMAP coordinates to:
+1. Store the data in an AnnData object and preserve raw counts in a layer.
+   Use species-appropriate gene symbols in `adata.var_names`, matching the
+   capitalization of the packaged mappings (for example, `Gapdh` for mouse
+   and `GAPDH` for human). Convert Ensembl IDs to gene symbols before annotation.
+   The CLI reads `adata.layers["counts"]` by default; use
+   `--counts_layer <layer_name>` for a different layer, such as the tutorial's
+   `counts_RNA`.
+2. Annotate metabolic and non-metabolic genes using
+   `mern.support.KeggKGMLMetabolicDataset` and its `add_module_info` method.
+   Select highly variable genes separately for the two groups and store the
+   resulting boolean flags in `adata.var["highly_variable_metabolic"]` and
+   `adata.var["highly_variable_background"]`.
+3. Save the prepared AnnData as an `.h5ad` file for training and reaction-activity
+   averaging. The CLI uses the gene flags to select features and constructs the
+   reaction graph from the packaged metabolic resources.
 
-```text
-<output_dir>/mern_rep_<rep>/embeddings.pkl
-```
-This enables training of many replicates. Example bash scripts are included below.
+Use the same species for preprocessing, training, and averaging. The CLI
+defaults to mouse; pass `--species human` to both commands for human data.
 
-The defaults match the 25-dimensional KL-search runs used by
-`generate_mouse_intestine_kl_search.sh` and `generate_wt_main_kl_search.sh`:
+## Training and averaging reaction activity
 
-```text
-rep = 0
-n_metabolic_dim = 25
-n_background_dim = 15
-species = mouse
-strict_met_back_separation = true
-separate_hvgs = true
-rxn_genes_bias = true
-max_kl_weight = 0.001
-graph_kl_weight = 0.1
-n_steps_kl_warmup = 0
-```
+The default model hyperparameters for `mern train reps` match those used to
+generate the models in the paper.
 
-So the mouse intestine run can be launched with only paths and the input file:
+### Train replicate models
 
-```bash
-mern train reps \
-  --output_dir data/intestine/model_reps/mouse_intestine_kl_search_25/max_kl_0.001_graph_kl_0.1 \
-  --data_dir data/intestine \
-  --adata_file mouse_intestine_pp.h5ad.gz
-```
+We recommend training **at least 5 independent models** and averaging their
+inferred reaction activity. In the paper, reaction-activity consistency plateaued
+around 5 models (Figure S1J); the analyses used **15 models for mouse intestine**
+and **10 models for each other dataset or condition**, averaging reaction
+activity across all replicates.
 
-The WT folate main run uses the same training defaults with a different input:
-
-```bash
-mern train reps \
-  --output_dir data/folate/folate_07_11_2025/model_reps/wt_main_kl_search_25/max_kl_0.001_graph_kl_0.1 \
-  --data_dir data/folate/folate_07_11_2025 \
-  --adata_file main_wt_anndata_pp.h5ad.gz
-```
-
-All defaults can be overridden. For example:
+For example, train 10 models with different random seeds:
 
 ```bash
-mern train reps \
-  --output_dir /path/to/output \
-  --data_dir /path/to/data \
-  --adata_file mouse_intestine_pp.h5ad.gz \
-  --rep 3 \
-  --max_kl_weight 0.01 \
-  --graph_kl_weight 0.01 \
-  --n_background_dim 25
+for rep in {0..9}; do
+  mern train reps \
+    --rep "$rep" \
+    --output_dir /path/to/model_reps \
+    --data_dir /path/to/data \
+    --adata_file data.h5ad
+done
 ```
 
-Boolean defaults can also be turned off:
+The training CLI defaults to CUDA. For CPU training, add
+`--accelerator cpu --devices 1`.
 
-```bash
-mern train reps \
-  --output_dir /path/to/output \
-  --data_dir /path/to/data \
-  --adata_file mouse_intestine_pp.h5ad.gz \
-  --no_strict_met_back_separation \
-  --no_separate_hvgs \
-  --no_rxn_genes_bias
-```
+Each invocation trains one model. `--rep` sets the random seed for initialization
+and data splitting and saves the model and embeddings under
+`<output_dir>/mern_rep_<rep>/`. On Slurm, the same command can be run in an array
+job with `--rep "$SLURM_ARRAY_TASK_ID"` and an array range of `0-9`.
 
-For local CPU smoke checks, override the accelerator:
+### Average reaction activity
 
-```bash
-mern train reps \
-  --output_dir /tmp/mern_check \
-  --data_dir tests/data \
-  --adata_file mouse_intestine_100.h5ad \
-  --max_epochs 1 \
-  --accelerator cpu \
-  --devices 1
-```
-
-## Averaging reaction activity across replicates
-
-After training several replicate models, average stochastic reaction activity
-decodes with:
+After training, average reaction activity across the replicate models:
 
 ```bash
 mern average-enzyme-activity \
-  --dir /path/to/model_reps/reps \
-  --adata_path /path/to/data/cancer_endothelium_pp.h5ad \
-  --species human
-```
-
-By default this reads model directories under `--dir`, decodes each model 8
-times with independent seeds, and writes:
-
-```text
-<dir>/average_enzyme_activity.csv.gz
-```
-
-This command prepares the AnnData with the packaged KEGG support utilities, loads each replicate model on
-CPU by default, calls `mern.support.average_enzyme_activity`, and saves a
-compressed CSV. Override the output path or sampling settings with:
-
-```bash
-mern average-enzyme-activity \
-  --dir /path/to/model_reps/reps \
-  --adata_path /path/to/data/cancer_endothelium_pp.h5ad \
-  --output_path /path/to/average_enzyme_activity.csv.gz \
-  --species human \
-  --n_samples 16 \
-  --seed 8
-```
-
-Use `--accelerator cuda` only if you specifically want model loading/decoding on
-GPU. For Slurm, this can be run as a single follow-up job after replicate
-training finishes:
-
-```bash
-srun mern average-enzyme-activity \
-  --dir "$DATA_DIR/model_reps/reps" \
-  --adata_path "$DATA_DIR/cancer_endothelium_pp.h5ad" \
-  --species human
-```
-
-## Evaluating replicate consistency metrics
-
-To evaluate replicate consistency within each condition directory:
-
-```bash
-mern evaluate-models \
   --dir /path/to/model_reps \
-  --adata_path /path/to/data.h5ad \
-  --species mouse
+  --adata_path /path/to/data/data.h5ad
 ```
 
-Each condition under `--dir` is expected to
-contain replicate model directories. Stochastic reaction activity is averaged over
-8 decode samples by default, and results are written to:
+This command averages **8 independent Monte Carlo decoding samples per model**
+by default, then averages across models, following the paper's procedure
+(Figure S1I-J). It saves the cell-by-reaction activity matrix to
+`<model_reps>/average_enzyme_activity.csv.gz`. The command name uses
+`enzyme-activity` for the inferred reaction activity described in the paper.
 
-```text
-<dir>/evaluation_results.pkl
-```
+For additional options, use `mern train reps --help` or
+`mern average-enzyme-activity --help`.
 
-To compare two replicate directories directly:
-
-```bash
-mern evaluate-cross-models \
-  --dir1 /path/to/reps_a \
-  --dir2 /path/to/reps_b \
-  --adata_path /path/to/data.h5ad
-```
-
-This writes `vs_<dir2>.pkl` under
-`--dir1`. Both commands keep the old defaults of `--neighbors 100`,
-`--graph_neighbors 25`, `--seed 8`, and CPU model loading.
-
-### Slurm array wrapper
-
-For larger sweeps, wrap `mern train reps` in a Slurm array script. This mirrors
-the existing KL-search launchers: compute `rep`, `max_kl_weight`, and
-`graph_kl_weight` from `SLURM_ARRAY_TASK_ID`, then pass those values to the CLI.
-
-Mouse intestine 25-dimensional KL search:
-
-```bash
-#!/bin/bash
-#SBATCH --account=co_nilah
-#SBATCH --partition=savio3_gpu
-#SBATCH --qos=savio_lowprio
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
-#SBATCH --time=72:00:00
-#SBATCH --output=bash_output/train_mouse_intestine_kl_search_%A_%a.out
-#SBATCH --error=bash_output/train_mouse_intestine_kl_search_%A_%a.err
-#SBATCH --array=0-119
-
-set -euo pipefail
-
-n_metabolic_dim="${1:-25}"
-n_background_dim="${2:-15}"
-
-rep=$(( SLURM_ARRAY_TASK_ID % 15 ))
-param_idx=$(( SLURM_ARRAY_TASK_ID / 15 ))
-max_kl_idx=$(( param_idx % 4 ))
-graph_kl_idx=$(( param_idx / 4 ))
-
-max_kl_weights=(0.0001 0.001 0.005 0.01)
-graph_kl_weights=(0.01 0.1)
-
-max_kl_weight="${max_kl_weights[$max_kl_idx]}"
-graph_kl_weight="${graph_kl_weights[$graph_kl_idx]}"
-
-DATA_DIR="../../data/intestine"
-output_stem="mouse_intestine_kl_search_${n_metabolic_dim}"
-if [ "$n_background_dim" != "15" ]; then
-    output_stem="${output_stem}_back_${n_background_dim}"
-fi
-OUTPUT_DIR="$DATA_DIR/model_reps/${output_stem}/max_kl_${max_kl_weight}_graph_kl_${graph_kl_weight}"
-
-mkdir -p "$OUTPUT_DIR"
-
-mern train reps \
-  --rep "$rep" \
-  --output_dir "$OUTPUT_DIR" \
-  --data_dir "$DATA_DIR" \
-  --adata_file mouse_intestine_pp.h5ad.gz \
-  --n_metabolic_dim "$n_metabolic_dim" \
-  --n_background_dim "$n_background_dim" \
-  --max_kl_weight "$max_kl_weight" \
-  --graph_kl_weight "$graph_kl_weight"
-```
-
-For the WT main KL search, use the same wrapper pattern with
-`#SBATCH --array=0-79`, `rep=$(( SLURM_ARRAY_TASK_ID % 10 ))`,
-`param_idx=$(( SLURM_ARRAY_TASK_ID / 10 ))`, and:
-
-```bash
-max_kl_weights=(0.00001 0.0001 0.001 0.01)
-graph_kl_weights=(0.01 0.1)
-DATA_DIR="../../data/folate/folate_07_11_2025"
-OUTPUT_DIR="$DATA_DIR/model_reps/wt_main_kl_search_${n_metabolic_dim}/max_kl_${max_kl_weight}_graph_kl_${graph_kl_weight}"
-
-mern train reps \
-  --rep "$rep" \
-  --output_dir "$OUTPUT_DIR" \
-  --data_dir "$DATA_DIR" \
-  --adata_file main_wt_anndata_pp.h5ad.gz \
-  --n_metabolic_dim "$n_metabolic_dim" \
-  --n_background_dim "$n_background_dim" \
-  --max_kl_weight "$max_kl_weight" \
-  --graph_kl_weight "$graph_kl_weight"
-```
-
-Because the command defaults already include `species=mouse`,
-`strict_met_back_separation`, `separate_hvgs`, `rxn_genes_bias`, and
-`n_steps_kl_warmup=0`, those flags do not need to be repeated in the Slurm
-wrapper unless you want to make the script fully explicit.
-
-## Key capabilities
-
-- Learn graph-guided latent representations of cell state from single-cell RNA-seq data.
-- Separate metabolic variation from non-metabolic transcriptional variation.
-- Use reaction graphs and reaction-to-gene mappings to tie latent structure to metabolic biology.
-- Work with KEGG-derived metabolic datasets and packaged metabolic network resources.
-- Run downstream analysis and visualization utilities for pathway activity, latent factors, and topology-aware plots.
-
-## Package layout
-
-The current repository contains:
-
-- `src/mern/`: model code, including the main MeRN model, neural modules,
-  base components, dataloaders, optimizer utilities, and configuration/constants
-- `src/mern/support/`: analysis, plotting, dataset helpers, and other support code
-- `src/mern/support/data/kegg/`: packaged KEGG-derived graph resources and related
-  data files
-- `docs/source/`: documentation sources for Sphinx
-- `docs/source/tutorials/`: tutorial notebooks included in the docs
-- `docs/build/html/`: generated HTML documentation after a docs build
-
-## Contributing
-
-Contributions and bug reports are welcome through GitHub issues and pull requests.
-
-## Acknowledgements
-
-MeRN is built on [scvi-tools](https://github.com/scverse/scvi-tools) and uses its
-model, training, and data-management infrastructure. Parts of MeRN's model and
-data-splitting implementation were adapted from scvi-tools; its BSD-3-Clause
-notice is included in `LICENSE`.
-
-Gayoso A, Lopez R, Xing G, et al. A Python library for probabilistic analysis of
-single-cell omics data. *Nature Biotechnology* 40, 163–166 (2022).
-https://doi.org/10.1038/s41587-021-01206-w
-
-Early development of MERN drew on the software architecture of
-[scGLUE](https://github.com/gao-lab/GLUE). The current MERN implementation
-has been substantially rewritten and implements a distinct model and workflow.
-We gratefully acknowledge the scGLUE developers for their foundational work.
-
-Cao, Z.-J. and Gao, G. Multi-omics single-cell data integration and regulatory
-inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
-(2022). https://doi.org/10.1038/s41587-022-01284-4
-
-### KEGG data and reproducibility
+## KEGG data and reproducibility
 
 MeRN includes fixed, KEGG-derived human and mouse reaction graphs,
 reaction-gene mappings, and the associated information needed for training and
@@ -417,3 +191,27 @@ after the documented self-loop and reaction-gene mapping fixes.
 ### Application of MeRN to mouse embryogenesis and source of tutorial data
 
 Dias N, Lewinsohn DP, Colgan WN, Wang M, Kijima Y, Villagrana J, Hou TCJ, Gowri G, Chau A, Aktas T, Sumigray K, Weissman JS, Koblan LW, Wagner A, Smith ZD. Folate deficiency disrupts key metabolic transitions within the developing neural ectoderm. bioRxiv. 2026. doi:[10.64898/2026.09.18.752622](https://doi.org/10.64898/2026.09.18.752622)
+
+## Contributing
+
+Contributions and bug reports are welcome through GitHub issues and pull requests.
+
+## Acknowledgements
+
+MeRN is built on [scvi-tools](https://github.com/scverse/scvi-tools) and uses its
+model, training, and data-management infrastructure. Parts of MeRN's model and
+data-splitting implementation were adapted from scvi-tools; its BSD-3-Clause
+notice is included in `LICENSE`.
+
+Gayoso A, Lopez R, Xing G, et al. A Python library for probabilistic analysis of
+single-cell omics data. *Nature Biotechnology* 40, 163–166 (2022).
+https://doi.org/10.1038/s41587-021-01206-w
+
+Early development of MERN drew on the software architecture of
+[scGLUE](https://github.com/gao-lab/GLUE). The current MERN implementation
+has been substantially rewritten and implements a distinct model and workflow.
+We gratefully acknowledge the scGLUE developers for their foundational work.
+
+Cao, Z.-J. and Gao, G. Multi-omics single-cell data integration and regulatory
+inference with graph-linked embedding. *Nature Biotechnology* 40, 1458–1466
+(2022). https://doi.org/10.1038/s41587-022-01284-4
