@@ -238,7 +238,7 @@ def add_reps_parser(subparsers: argparse._SubParsersAction) -> None:
         "--learning_rate",
         "--learning-rate",
         type=float,
-        default=2e-3,
+        default=1e-3,
         help="Learning rate for training",
     )
     parser.add_argument(

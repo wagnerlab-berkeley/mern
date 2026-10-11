@@ -757,7 +757,7 @@ def test_train_defaults_use_90_10_split_batch_128_and_rmsprop(general_package_mo
     assert captured["validation_size"] is None
     assert captured["batch_size"] == 128
     assert captured["plan_kwargs"]["optimizer"] == "Custom"
-    assert captured["plan_kwargs"]["optimizer_creator"] is create_rmsprop_optimizer
+    assert captured["plan_kwargs"]["optimizer_creator"].func is create_rmsprop_optimizer
 
 
 def test_compact_repro_wrapper_training_defaults_match_script():

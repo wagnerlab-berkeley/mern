@@ -88,6 +88,17 @@ def _dense_counts(adata):
     return counts.toarray() if hasattr(counts, "toarray") else np.asarray(counts)
 
 
+@pytest.mark.parametrize("plan_kwargs, expected_lr", [(None, 1e-3), ({"lr": 2e-3}, 2e-3)])
+def test_train_learning_rate_reaches_rmsprop(full_strict_model, monkeypatch, plan_kwargs, expected_lr):
+    def optimizer_runner(model, training_plan, **kwargs):
+        return lambda: training_plan.configure_optimizers()["optimizer"]
+
+    monkeypatch.setattr(full_strict_model, "_train_runner_cls", optimizer_runner)
+    optimizer = full_strict_model.train(max_epochs=1, plan_kwargs=plan_kwargs)
+    assert isinstance(optimizer, torch.optim.RMSprop)
+    assert all(group["lr"] == expected_lr for group in optimizer.param_groups)
+
+
 def _one_model_batch(model, batch_size=8):
     data_loader = model._make_data_loader(
         model.adata, indices=np.arange(model.adata.n_obs), batch_size=batch_size

@@ -1,5 +1,6 @@
 """MERN model for single-cell data analysis."""
 
+from functools import partial
 from typing import Optional, Union, Literal
 import warnings
 import anndata
@@ -299,7 +300,9 @@ class MERN(VAEMixin, RNASeqMixin, BaseModelClass):
         plan_kwargs = plan_kwargs or {}
         if "optimizer" not in plan_kwargs:
             plan_kwargs["optimizer"] = "Custom"
-            plan_kwargs["optimizer_creator"] = create_rmsprop_optimizer
+            plan_kwargs["optimizer_creator"] = partial(
+                create_rmsprop_optimizer, lr=plan_kwargs.get("lr", 1e-3)
+            )
 
         training_plan = self._training_plan_cls(self.module, **plan_kwargs)
 

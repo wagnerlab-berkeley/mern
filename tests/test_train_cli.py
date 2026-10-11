@@ -24,3 +24,8 @@ def test_train_counts_layer_default_is_unchanged():
 def test_train_counts_layer_accepts_custom_value_and_hyphenated_alias():
     assert _parse_train_args("--counts_layer", "raw_counts").counts_layer == "raw_counts"
     assert _parse_train_args("--counts-layer", "umi_counts").counts_layer == "umi_counts"
+
+
+def test_train_learning_rate_default_and_override():
+    assert _parse_train_args().learning_rate == 1e-3
+    assert _parse_train_args("--learning-rate", "0.002").learning_rate == 2e-3

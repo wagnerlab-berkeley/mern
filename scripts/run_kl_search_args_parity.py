@@ -242,7 +242,8 @@ def main() -> None:
     parser.add_argument("--rxn-genes-bias", action="store_true", default=True)
     parser.add_argument("--no-rxn-genes-bias", dest="rxn_genes_bias", action="store_false")
     parser.add_argument("--fixed-graph-cell-kl", action="store_true", default=False)
-    parser.add_argument("--learning-rate", type=float, default=2e-3)
+    # Preserve the paper's effective RMSprop rate; the old code ignored its lr argument.
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--omit-oxphos", action="store_true", default=False)
     parser.add_argument("--shuffle-rxn-genes", action="store_true", default=False)
     parser.add_argument("--shuffle-graph", action="store_true", default=False)
