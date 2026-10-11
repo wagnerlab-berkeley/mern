@@ -151,6 +151,13 @@ by default, then averages across models, following the paper's procedure
 For additional options, use `mern train reps --help` or
 `mern average-enzyme-activity --help`.
 
+Example Slurm scripts are available for [training replicates](scripts/examples/train_reps.sh),
+the [paper's KL-weight search](scripts/examples/kl_search.sh),
+[evaluating models](scripts/examples/evaluate_models.sh), and
+[averaging reaction activity](scripts/examples/average_reaction_activity.sh).
+Activate your MeRN environment and edit the paths, species, and Slurm settings
+before submitting.
+
 ## KEGG data and reproducibility
 
 MeRN includes fixed, KEGG-derived human and mouse reaction graphs,
